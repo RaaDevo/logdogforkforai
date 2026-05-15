@@ -2,10 +2,12 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "logdog-development",
   "main": "src/server.ts",
+  "account_id": "d910f54eba4cf3d1634aa41c3d9a93bc",
   "compatibility_date": "2026-01-01",
   "compatibility_flags": ["nodejs_compat"],
   "containers": [
     {
+      "name": "logdog-server",
       "class_name": "Server",
       "image": "../server/Dockerfile",
       "max_instances": 1,

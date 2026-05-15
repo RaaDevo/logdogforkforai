@@ -2,7 +2,7 @@ import { Container, getContainer } from "@cloudflare/containers";
 import handler from "@tanstack/react-start/server-entry";
 
 export class Server extends Container<Env> {
-  defaultPort = 8000;
+  defaultPort = 3001;
   sleepAfter = "10m";
   envVars = Object.fromEntries(
     Object.entries(this.env).filter(([, value]) => typeof value === "string" && !!value),

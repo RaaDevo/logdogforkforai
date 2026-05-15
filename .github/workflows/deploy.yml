@@ -50,6 +50,7 @@ jobs:
           echo "${{ secrets.OPENROUTER_API_KEY }}" | bun wrangler secret put OPENROUTER_API_KEY
           echo "${{ vars.OPENROUTER_TITLE }}" | bun wrangler secret put OPENROUTER_TITLE
           echo "${{ vars.OPENROUTER_REFERER }}" | bun wrangler secret put OPENROUTER_REFERER
+          echo "${{ vars.OPENROUTER_MODEL }}" | bun wrangler secret put OPENROUTER_MODEL
 
       - name: Deploy to Cloudflare
         working-directory: src/app
