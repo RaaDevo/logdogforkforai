@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -9,6 +10,8 @@ from parsers.few_shot_store import FewShotStore
 from parsers.llm_engine import LlmEngine
 from parsers.normalization import sanitize_identifier, unique_identifier
 from parsers.schema_cache import SchemaCache
+
+logger = logging.getLogger(__name__)
 
 NULL_RATE_THRESHOLD = 0.6
 MAX_REFINEMENT_ITERATIONS = 3
@@ -160,6 +163,17 @@ class SelfCorrectingSchemaInferer:
             },
             confidence=confidence,
             profile_name=profile_name,
+        )
+
+        cost_summary = self.llm_engine.get_cost_summary()
+        logger.info(
+            "Schema inference complete for %s/%s: model=%s cost=$%.6f tokens=%d refined=%s",
+            format_name,
+            domain,
+            cost_summary["model"],
+            cost_summary["total_cost_usd"],
+            cost_summary["total_tokens"],
+            refined,
         )
 
         return SchemaInferenceResult(

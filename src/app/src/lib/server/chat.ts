@@ -4,6 +4,8 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { getEnv } from "#/environment";
 
+const ACCESS_TOKEN_COOKIE = "logdog-access-token";
+
 const TABLE_RESULT_LIMIT = 200;
 const DEFAULT_SQL_TYPE = "TEXT";
 
@@ -30,11 +32,12 @@ type TableAccumulator = {
   columns: Map<string, string>;
 };
 
+const MAX_PERSISTED_MESSAGES = 500;
+const MAX_MESSAGE_CONTENT_LENGTH = 100000;
+
 const streamLogChatInputSchema = z.object({
   entryId: z.string().min(1),
-  authorizationHeader: z.string().min(1),
-  origin: z.string().url(),
-  messages: z.array(z.unknown()).min(1),
+  messages: z.array(z.unknown()).min(1).max(MAX_PERSISTED_MESSAGES),
 });
 
 const listAvailableTablesInputSchema = z.object({
@@ -288,7 +291,7 @@ function toTextModelMessages(messages: unknown[]) {
 
     modelMessages.push({
       role,
-      content,
+      content: content.slice(0, MAX_MESSAGE_CONTENT_LENGTH),
     });
   }
 
@@ -530,7 +533,9 @@ function createLogChatServerTools(options: { entryId: string; origin: string; au
       }
 
       const blob = await response.arrayBuffer();
-      const base64 = btoa(String.fromCharCode(...new Uint8Array(blob)));
+      const bytes = new Uint8Array(blob);
+      const binary = bytes.reduce((acc, byte) => acc + String.fromCharCode(byte), "");
+      const base64 = btoa(binary);
       const downloadUrl = `data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,${base64}`;
 
       return {
@@ -551,16 +556,26 @@ function createLogChatServerTools(options: { entryId: string; origin: string; au
 
 export const streamLogChat = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => streamLogChatInputSchema.parse(data))
-  .handler(async ({ data }) => {
+  .handler(async ({ data, request }) => {
     const modelMessages = toTextModelMessages(data.messages);
     if (modelMessages.length === 0) {
       throw new Error("No text messages were provided.");
     }
 
+    // Derive backend origin and auth token server-side from the incoming
+    // request instead of accepting them from the client. This prevents SSRF
+    // and token-forwarding attacks.
+    const requestUrl = new URL(request.url);
+    const backendOrigin = `${requestUrl.protocol}//${requestUrl.host}`;
+
+    const cookies = request.headers.get("cookie") ?? "";
+    const accessToken = parseCookieValue(cookies, ACCESS_TOKEN_COOKIE);
+    const authorizationHeader = accessToken ? `Bearer ${accessToken}` : "";
+
     const tools = createLogChatServerTools({
       entryId: data.entryId,
-      origin: data.origin,
-      authorizationHeader: data.authorizationHeader,
+      origin: backendOrigin,
+      authorizationHeader,
     });
 
     const {
@@ -582,3 +597,18 @@ export const streamLogChat = createServerFn({ method: "POST" })
 
     return toServerSentEventsResponse(chatStream);
   });
+
+function parseCookieValue(cookieHeader: string, name: string): string | null {
+  for (const cookie of cookieHeader.split(";")) {
+    const trimmed = cookie.trim();
+    const eqIndex = trimmed.indexOf("=");
+    if (eqIndex === -1) {
+      continue;
+    }
+    const key = trimmed.slice(0, eqIndex).trim();
+    if (key === name) {
+      return decodeURIComponent(trimmed.slice(eqIndex + 1).trim());
+    }
+  }
+  return null;
+}

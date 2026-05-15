@@ -23,6 +23,11 @@ T = TypeVar("T", bound=BaseModel)
 INPUT_PRICE_PER_M = 0.25
 OUTPUT_PRICE_PER_M = 1.50
 
+# Default per-instance budget for LLM parsing operations.
+_DEFAULT_LLM_BUDGET_USD = 0.50
+# Maximum number of LLM invocations per engine instance before forcing a stop.
+_MAX_INVOCATIONS_PER_INSTANCE = 100
+
 
 class LlmEngine:
     def __init__(
@@ -37,13 +42,14 @@ class LlmEngine:
         self.model = model or DEFAULT_MODEL
         self.temperature = temperature
         self.max_tokens = max_tokens
-        self.budget_usd = budget_usd
+        self.budget_usd = budget_usd if budget_usd is not None else _DEFAULT_LLM_BUDGET_USD
         self.few_shot_store = few_shot_store or FewShotStore()
         self.profile_definition = profile_definition or {}
         self._total_input_tokens = 0
         self._total_output_tokens = 0
         self._total_cost_usd = 0.0
         self._budget_exceeded = False
+        self._invocation_count = 0
 
     @property
     def budget_exceeded(self) -> bool:
@@ -270,6 +276,14 @@ class LlmEngine:
         retry_count = 0
         last_error: str | None = None
 
+        # Enforce per-instance invocation cap.
+        if self._invocation_count >= _MAX_INVOCATIONS_PER_INSTANCE:
+            return LlmInvocationResult(
+                success=False,
+                warning=f"LLM invocation limit reached ({_MAX_INVOCATIONS_PER_INSTANCE} calls per parse job).",
+                retry_count=0,
+            )
+
         estimated_input_tokens = len(prompt) // 4
         estimated_cost = estimated_input_tokens / 1_000_000 * INPUT_PRICE_PER_M + 500 / 1_000_000 * OUTPUT_PRICE_PER_M
         if not self._check_budget(estimated_cost):
@@ -301,6 +315,7 @@ class LlmEngine:
                 self._total_input_tokens += input_tokens
                 self._total_output_tokens += output_tokens
                 self._total_cost_usd += cost_usd
+                self._invocation_count += 1
 
                 return LlmInvocationResult(
                     success=True,

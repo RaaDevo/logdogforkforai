@@ -3,11 +3,11 @@ from typing import TypeVar
 from langchain_openrouter import ChatOpenRouter
 from pydantic import BaseModel
 
-from environment import OPENROUTER_API_KEY, OPENROUTER_TITLE, OPENROUTER_REFERER
+from environment import OPENROUTER_API_KEY, OPENROUTER_TITLE, OPENROUTER_REFERER, OPENROUTER_MODEL
 
 T = TypeVar("T", bound=BaseModel)
 
-DEFAULT_MODEL = "google/gemini-3.1-flash-lite-preview"
+DEFAULT_MODEL = OPENROUTER_MODEL.get_secret_value()
 DEFAULT_TEMPERATURE = 0.5
 DEFAULT_MAX_TOKENS = 2048
 
@@ -15,12 +15,13 @@ DEFAULT_MAX_TOKENS = 2048
 class GenerativeModel:
     def __init__(
         self,
-        model: str = DEFAULT_MODEL,
+        model: str | None = None,
         temperature: float = DEFAULT_TEMPERATURE,
         max_tokens: int | None = DEFAULT_MAX_TOKENS,
     ):
+        resolved_model = model or DEFAULT_MODEL
         self.client = ChatOpenRouter(
-            model=model,
+            model=resolved_model,
             temperature=temperature,
             max_tokens=max_tokens,
             api_key=OPENROUTER_API_KEY.get_secret_value(),

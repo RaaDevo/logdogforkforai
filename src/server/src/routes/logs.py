@@ -187,6 +187,103 @@ FORBIDDEN_SQL_KEYWORDS = re.compile(
     r"^\s*(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|REPLACE|GRANT|REVOKE)\s",
     re.IGNORECASE,
 )
+
+# Maximum LIMIT that may be injected into any SQL query for safety.
+_HARD_SQL_LIMIT = 10000
+
+# Chat message limits.
+_MAX_PERSISTED_MESSAGES = 500
+_MAX_MESSAGE_CONTENT_LENGTH = 100000
+
+
+def _extract_table_names(parsed: sqlparse.sql.Statement) -> set[str]:
+    """Extract table names referenced in a parsed SQL statement."""
+    tables: set[str] = set()
+
+    def extract_from_token(token: sqlparse.sql.Token) -> None:
+        if isinstance(token, sqlparse.sql.Identifier):
+            name = token.get_real_name()
+            if name:
+                tables.add(name)
+        elif isinstance(token, sqlparse.sql.IdentifierList):
+            for identifier in token.get_identifiers():
+                name = identifier.get_real_name()
+                if name:
+                    tables.add(name)
+        elif token.ttype is sqlparse.tokens.Name:
+            tables.add(token.value)
+        elif isinstance(token, sqlparse.sql.Where):
+            # Stop traversal at WHERE clause - table names can't appear there
+            return
+
+    if parsed.get_type() == "SELECT":
+        from_seen = False
+        for token in parsed.tokens:
+            if token.ttype is sqlparse.tokens.Keyword and token.value.upper() in {
+                "FROM",
+                "JOIN",
+                "INNER JOIN",
+                "LEFT JOIN",
+                "RIGHT JOIN",
+                "FULL JOIN",
+                "LEFT OUTER JOIN",
+                "RIGHT OUTER JOIN",
+                "FULL OUTER JOIN",
+                "CROSS JOIN",
+                "NATURAL JOIN",
+            }:
+                from_seen = True
+                continue
+            if from_seen:
+                extract_from_token(token)
+                from_seen = False
+            if token.ttype is sqlparse.tokens.Keyword and token.value.upper() in {
+                "WHERE",
+                "GROUP",
+                "ORDER",
+                "HAVING",
+                "LIMIT",
+                "OFFSET",
+            }:
+                break
+    return tables
+
+
+def _validate_table_allowlist(sql_text: str, allowed_tables: set[str]) -> str | None:
+    """Validate that all tables referenced in the SQL are in the allowed set.
+
+    Returns an error message string if validation fails, or None on success.
+    """
+    parsed = sqlparse.parse(sql_text)
+    for statement in parsed:
+        refs = _extract_table_names(statement)
+        if not refs:
+            continue
+        disallowed = refs - allowed_tables
+        if disallowed:
+            return f"Query references disallowed tables: {', '.join(sorted(disallowed))}."
+
+    return None
+
+
+def _inject_sql_limit(sql_text: str, max_rows: int = _HARD_SQL_LIMIT) -> str:
+    """Inject a LIMIT clause into a SELECT if one is not already present."""
+    parsed = sqlparse.parse(sql_text)
+    if not parsed:
+        return sql_text
+
+    stmt = parsed[0]
+    if stmt.get_type() != "SELECT":
+        return sql_text
+
+    # Check if LIMIT is already present
+    has_limit = any(token.ttype is sqlparse.tokens.Keyword and token.value.upper() == "LIMIT" for token in stmt.tokens)
+    if has_limit:
+        return sql_text
+
+    return f"{sql_text.rstrip(';').rstrip()} LIMIT {max_rows};"
+
+
 QUERY_RESULT_LIMIT = 500
 
 
@@ -971,16 +1068,25 @@ def replace_chat_messages(
         database.delete(message)
 
     saved_messages = 0
-    for message in payload.messages:
+    messages_to_save = payload.messages[:_MAX_PERSISTED_MESSAGES]
+    if len(payload.messages) > _MAX_PERSISTED_MESSAGES:
+        logger.warning(
+            "Truncated chat messages for group %s: %d -> %d",
+            group.id,
+            len(payload.messages),
+            _MAX_PERSISTED_MESSAGES,
+        )
+
+    for message in messages_to_save:
         role = str(message.get("role", "assistant"))
         if role == "":
             role = "assistant"
 
         content = message.get("content", "")
         if isinstance(content, str):
-            normalized_content = content
+            normalized_content = content[:_MAX_MESSAGE_CONTENT_LENGTH]
         else:
-            normalized_content = json.dumps(content, ensure_ascii=True)
+            normalized_content = json.dumps(content, ensure_ascii=True)[:_MAX_MESSAGE_CONTENT_LENGTH]
 
         database.add(
             LogMessage(
@@ -1031,12 +1137,11 @@ def _fetch_group_table_context(group_id: str, database: Session) -> str:
     return "\n".join(lines)
 
 
-def _build_chat_system_prompt(group_id: str, table_context: str) -> str:
+def _build_chat_system_prompt(group_id: str) -> str:
     return (
         "You are Logdog's AI log analysis assistant. "
         f"You are helping the user analyze log group {group_id}.\n\n"
-        f"{table_context}\n\n"
-        "Answer the user's questions based on the log data context provided above. "
+        "Answer the user's questions based on the log data context provided in the first message below. "
         "Be concise, accurate, and actionable. If the data is insufficient, say so."
     )
 
@@ -1050,10 +1155,16 @@ def stream_chat(
 ):
     group = _require_owned_group(database=database, group_id=group_id, user_id=current_user.id)
     table_context = _fetch_group_table_context(str(group.id), database)
-    system_prompt = _build_chat_system_prompt(str(group.id), table_context)
+
+    system_prompt = _build_chat_system_prompt(str(group.id))
 
     model = get_generative_model()
     messages: list[tuple[str, str]] = [("system", system_prompt)]
+
+    # Inject table context as a clearly delimited user message rather than
+    # embedding untrusted log content in the system prompt (prompt-injection mitigation).
+    messages.append(("user", f"[Log data context for this session]\n\n{table_context}\n\n---\n"))
+
     for turn in payload.history:
         role = str(turn.get("role", "user"))
         content = str(turn.get("content", ""))
@@ -1218,16 +1329,19 @@ def execute_nl_query(
                 detail=f"Statement type '{statement.get_type()}' is not allowed. Only SELECT is permitted.",
             )
 
-    for table_name in allowed_tables:
-        sql_text = sql_text.replace(f'"{table_name}"', f'"{table_name}"')
+    table_error = _validate_table_allowlist(sql_text, allowed_tables)
+    if table_error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=table_error)
+
+    sql_text = _inject_sql_limit(sql_text, max_rows=QUERY_RESULT_LIMIT)
 
     megabase_database = MegabaseSessionLocal()
     try:
         init_megabase(megabase_database)
         result = megabase_database.execute(sa_text(sql_text))
         columns = [str(col) for col in result.keys()]
-        rows = result.fetchall()
-        results = [dict(zip(columns, row)) for row in rows[:QUERY_RESULT_LIMIT]]
+        rows = result.fetchall() if result.returns_rows else []
+        results = [dict(zip(columns, row)) for row in rows]
 
         nl_query = LogNlQuery(
             group_id=group.id,
@@ -1279,6 +1393,12 @@ def execute_group_query(
     if not allowed_tables:
         return QueryResponse(status="error", message="No tables are available for this log group.")
 
+    table_error = _validate_table_allowlist(sql_text, allowed_tables)
+    if table_error:
+        return QueryResponse(status="error", message=table_error)
+
+    sql_text = _inject_sql_limit(sql_text, max_rows=QUERY_RESULT_LIMIT)
+
     start_time = time.monotonic()
     megabase_database = MegabaseSessionLocal()
     try:
@@ -1289,7 +1409,7 @@ def execute_group_query(
         elapsed_ms = (time.monotonic() - start_time) * 1000
 
         columns = [str(col) for col in raw_columns]
-        limited_rows = raw_rows[:QUERY_RESULT_LIMIT]
+        limited_rows = raw_rows
 
         serializable_rows: list[list[Any]] = []
         for row in limited_rows:

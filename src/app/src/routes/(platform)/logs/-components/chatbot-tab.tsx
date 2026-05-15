@@ -14,7 +14,7 @@ import { Button } from "#/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "#/components/ui/collapsible";
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from "#/components/ui/input-group";
 import { Spinner } from "#/components/ui/spinner";
-import { getAccessToken, getLogChatMessages, replaceLogChatMessages } from "#/lib/server";
+import { getLogChatMessages, replaceLogChatMessages } from "#/lib/server";
 import { streamLogChat } from "#/lib/server/chat";
 import { ChatMessageItem } from "#/routes/(platform)/logs/-components/chat-message";
 
@@ -106,10 +106,6 @@ export function ChatbotTab({ entryId, tableNames }: ChatbotTabProps) {
   const hydratedMessagesRef = useRef<UIMessage[]>([]);
   const hasHydratedRef = useRef(false);
 
-  const token = getAccessToken();
-  const authorizationHeader = token ? `Bearer ${token}` : "";
-  const origin = typeof window === "undefined" ? "http://localhost" : window.location.origin;
-
   const { messages, sendMessage, setMessages, stop, isLoading, status, error } = useChat({
     id: `log-group-${entryId}`,
     connection: fetchServerSentEvents("/", {
@@ -127,8 +123,6 @@ export function ChatbotTab({ entryId, tableNames }: ChatbotTabProps) {
         return streamLogChat({
           data: {
             entryId,
-            authorizationHeader,
-            origin,
             messages: Array.isArray(parsedBody.messages) ? parsedBody.messages : [],
           },
           signal: init?.signal ?? undefined,
