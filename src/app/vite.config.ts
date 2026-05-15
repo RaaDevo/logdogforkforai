@@ -6,6 +6,10 @@ import viteReact from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
 const config = defineConfig({
+  server: {
+    port: 3000,
+    allowedHosts: [".dennise.me"],
+  },
   resolve: {
     tsconfigPaths: true,
   },

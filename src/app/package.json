@@ -7,11 +7,11 @@
   },
   "scripts": {
     "postinstall": "bun run types",
-    "dev": "vite dev --port 3000",
+    "dev": "vite dev",
     "build": "vite build",
-    "preview": "vite preview",
-    "check": "biome check --write",
-    "types": "wrangler types && tsr generate"
+    "deploy": "wrangler deploy",
+    "types": "wrangler types && tsr generate",
+    "check": "biome check --write"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
