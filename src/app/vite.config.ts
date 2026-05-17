@@ -24,6 +24,7 @@ const config = defineConfig({
     tailwindcss(),
     devtools(),
   ],
+  envDir: "../..",
 });
 
 export default config;

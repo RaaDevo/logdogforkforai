@@ -1,8 +1,10 @@
 import { Container, getContainer } from "@cloudflare/containers";
 import handler from "@tanstack/react-start/server-entry";
 
+const PORT = 3001;
+
 export class Server extends Container<Env> {
-  defaultPort = 3001;
+  defaultPort = PORT;
   sleepAfter = "10m";
   envVars = Object.fromEntries(
     Object.entries(this.env).filter(([, value]) => typeof value === "string" && !!value),
@@ -17,8 +19,16 @@ export default {
       const apiUrl = new URL(request.url);
       apiUrl.pathname = apiUrl.pathname.replace(/^\/api/, "") || "/";
 
-      const instance = getContainer(env.SERVER, "singleton");
-      const response = await instance.fetch(new Request(apiUrl.toString(), request));
+      if (env.SERVER) {
+        const instance = getContainer(env.SERVER, "singleton");
+        const response = await instance.fetch(new Request(apiUrl.toString(), request));
+        return response;
+      }
+
+      // Fallback: proxy to local Python server
+      apiUrl.protocol = "http";
+      apiUrl.host = `localhost:${PORT}`;
+      const response = await fetch(new Request(apiUrl.toString(), request));
       return response;
     }
 

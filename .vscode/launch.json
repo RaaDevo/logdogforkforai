@@ -16,10 +16,9 @@
     {
       "name": "Server",
       "request": "launch",
-      "type": "debugpy",
+      "type": "node-terminal",
       "cwd": "${workspaceFolder}/src/server",
-      "module": "fastapi",
-      "args": ["dev", "src/main.py"]
+      "command": "uv run src/main.py"
     }
   ],
   "compounds": [

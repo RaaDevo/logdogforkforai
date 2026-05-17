@@ -1,8 +1,10 @@
 import os
-from dotenv import load_dotenv, find_dotenv
+from pathlib import Path
+
+from dotenv import load_dotenv
 from pydantic import SecretStr
 
-load_dotenv(find_dotenv())
+load_dotenv(dotenv_path=Path(__file__).resolve().parents[3] / ".env")
 
 
 def _get_env_var(key: str, defaultValue: str | None = None) -> SecretStr:

@@ -11,7 +11,6 @@ import {
   RefreshCw,
   Search,
   Shield,
-  Terminal,
   Zap,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -140,10 +139,8 @@ function LandingPage() {
 
       <nav className={"relative z-10 mx-auto flex max-w-7xl items-center justify-between px-6 py-4"}>
         <div className={"flex items-center gap-2.5"}>
-          <div className={"flex size-8 shrink-0 items-center justify-center rounded-lg bg-amber-400"}>
-            <Terminal className={"size-4 text-zinc-900"} />
-          </div>
-          <span className={"font-bold text-lg tracking-tight"}>logdog</span>
+          <img alt="Logdog" className="h-8 w-auto" src="/icon.png" />
+          <span className={"font-bold text-lg tracking-tight"}>Logdog</span>
         </div>
 
         <div className={"hidden items-center gap-7 text-sm text-zinc-400 md:flex"}>
@@ -591,23 +588,18 @@ function LandingPage() {
       <footer className={"relative z-10 border-zinc-800/80 border-t px-6 py-10"}>
         <div className={"mx-auto flex max-w-7xl flex-col items-center justify-between gap-5 md:flex-row"}>
           <div className={"flex items-center gap-2.5"}>
-            <div className={"flex size-7 shrink-0 items-center justify-center rounded-lg bg-amber-400"}>
-              <Terminal className={"size-3.5 text-zinc-900"} />
-            </div>
-            <span className={"font-bold text-sm"}>logdog</span>
+            <img alt="Logdog" className="h-7 w-auto" src="/icon.png" />
+            <span className={"font-bold text-sm"}>Logdog</span>
           </div>
 
-          <p className={"text-xs text-zinc-600"}>Copyright 2026 Logdog. All logs welcome.</p>
+          <p className={"text-xs text-zinc-600"}>Copyright 2026 Dennise Catolos. All logs welcome.</p>
 
           <div className={"flex gap-7 text-xs text-zinc-500"}>
-            <a className={"transition-colors hover:text-zinc-300"} href={"#"}>
+            <a className={"transition-colors hover:text-zinc-300"} href={"https://dennise.me/privacy"}>
               Privacy
             </a>
-            <a className={"transition-colors hover:text-zinc-300"} href={"#"}>
+            <a className={"transition-colors hover:text-zinc-300"} href={"https://dennise.me/terms"}>
               Terms
-            </a>
-            <a className={"transition-colors hover:text-zinc-300"} href={"#"}>
-              Docs
             </a>
           </div>
         </div>
