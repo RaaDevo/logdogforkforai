@@ -16,6 +16,16 @@ try:
 except ImportError:
     chardet = None
 
+# Re-use patterns from preprocessor
+try:
+    from parsers.preprocessor import MULTILINE_CONTINUATION_PATTERN
+except ImportError:
+    # Fallback definition if preprocessor can't be imported
+    import re as _re
+    MULTILINE_CONTINUATION_PATTERN = _re.compile(
+        r"^(?:\s+at\s|Caused by:|\.{3}\s*\d+\s*more|\s{4,}\S)",
+    )
+
 from parsers.contracts import (
     BASELINE_COLUMN_NAMES,
     BASELINE_COLUMNS,
@@ -915,16 +925,29 @@ class SyslogPipeline(DeterministicParserPipeline):
             if match is None:
                 warnings.append(f"line {index}: not valid syslog format")
                 continue
+
+            message = (match.group("message") or "")
+
             row: dict[str, Any] = {
                 "timestamp": match.group("timestamp"),
                 "host": match.group("host"),
                 "process": match.group("process"),
                 "pid": _cast_value(match.group("pid") or ""),
-                "message": (match.group("message") or "")[:500],
-                "log_level": _infer_log_level(match.group("message") or stripped),
+                "message": message[:500],
+                "log_level": _infer_log_level(message or stripped),
                 "source": filename,
                 "raw": stripped[:4000],
             }
+
+            # Parse embedded logfmt payload (e.g. "tool=ETCH-01 chamber=A ...")
+            if message and ("=" in message):
+                pairs = LOGFMT_RE.findall(message)
+                if pairs and len(pairs) >= 1:
+                    for key, value in pairs:
+                        safe_key = _sanitize(key)
+                        if safe_key not in row:
+                            row[safe_key] = _cast_value(value.strip().strip('"'))
+
             pri = match.group("pri")
             if pri is not None:
                 pri_value = int(pri)
@@ -1170,6 +1193,251 @@ class BinaryHexPipeline(DeterministicParserPipeline):
 
         warnings.append("No recognizable hex dump or printable strings found.")
         return rows, warnings
+
+
+# ── SectionedKeyValuePipeline ───────────────────────────────────────────────
+# Handles blank-line-delimited blocks of "Key: Value" lines
+# (e.g. windows_event.log, keyvalue_pairs.log)
+
+
+SECTION_HEADER_RE = re.compile(r"^\[.*\]\s*$")
+COLON_KV_RE = re.compile(r"^([A-Za-z][\w\s]*)\s*:\s*(.+)$")
+
+
+class SectionedKeyValuePipeline(DeterministicParserPipeline):
+    """Parser for blank-line-separated KEY: VALUE blocks (Windows Event Log style)."""
+
+    parser_key = "sectioned_kv"
+    structured_output = True
+
+    def _score_content(self, content: str) -> float:
+        lines = [line for line in content.splitlines()[:30] if line.strip()]
+        if not lines:
+            return 0.0
+
+        # Count blank-line-separated blocks with colon KV lines
+        colon_kv_lines = sum(1 for line in lines if COLON_KV_RE.match(line))
+        if colon_kv_lines < 2:
+            return 0.0
+
+        # Count section boundaries (blank lines in full content)
+        all_lines = content.splitlines()
+        if len(all_lines) < 5:
+            return 0.0
+        blank_count = 0
+        for line in all_lines[:50]:
+            if not line.strip():
+                blank_count += 1
+
+        if blank_count < 2 and colon_kv_lines < 4:
+            return 0.0
+
+        return min(0.95, colon_kv_lines / max(len(lines), 1))
+
+    def _parse_rows(self, content: str, filename: str) -> tuple[list[dict[str, Any]], list[str]]:
+        rows: list[dict[str, Any]] = []
+        warnings: list[str] = []
+        blocks = self._split_blocks(content)
+
+        for block_index, block in enumerate(blocks, start=1):
+            block_lines = [line.strip() for line in block.splitlines() if line.strip()]
+            if not block_lines:
+                continue
+
+            row: dict[str, Any] = {
+                "source_file": filename,
+                "block_index": block_index,
+                "raw": block.strip()[:4000],
+            }
+
+            # Check for a header line like [timestamp] or section header
+            header_line = block_lines[0]
+            if SECTION_HEADER_RE.match(header_line):
+                row["header"] = header_line
+                block_lines = block_lines[1:]
+            elif COLON_KV_RE.match(header_line):
+                pass  # first line is a KV pair, no separate header
+            else:
+                row["header"] = header_line
+                block_lines = block_lines[1:]
+
+            # Parse KEY: VALUE pairs
+            for line in block_lines:
+                match = COLON_KV_RE.match(line)
+                if not match:
+                    continue
+                key = _sanitize(match.group(1).strip())
+                value = _cast_value(match.group(2).strip())
+                if key == "event_id":
+                    key = "event_id"
+                row[key] = value
+
+            # Build message from key fields
+            message_parts = []
+            for msg_field in ("message", "Message", "MESSAGE", "event_id", "Event ID", "EVENT_TYPE"):
+                val = row.get(_sanitize(msg_field))
+                if val is not None:
+                    message_parts.append(str(val))
+            row["message"] = " | ".join(message_parts) if message_parts else block_lines[0][:500]
+
+            # Infer log level
+            raw_text = " ".join(block_lines)
+            row["log_level"] = _infer_log_level(raw_text)
+
+            # Set source file
+            row["source"] = filename
+
+            rows.append(row)
+
+        if not rows:
+            warnings.append("No sectioned key-value blocks found.")
+        return rows, warnings
+
+    @staticmethod
+    def _split_blocks(content: str) -> list[str]:
+        """Split content into blank-line-separated blocks."""
+        blocks: list[str] = []
+        current: list[str] = []
+        for line in content.splitlines():
+            if line.strip():
+                current.append(line)
+            else:
+                if current:
+                    blocks.append("\n".join(current))
+                    current = []
+        if current:
+            blocks.append("\n".join(current))
+        return blocks
+
+
+# ── TimestampedEventTextPipeline ────────────────────────────────────────────
+# Handles plaintext events with bracketed or ISO timestamps, continuation lines
+# (e.g. alarm_events.log, plaintext_events.log, multiline_java.log)
+
+
+TIMESTAMPED_LINE_RE = re.compile(
+    r"^(?:"
+    r"\[\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{2}:\d{2}"  # [2026-04-17 08:03:15...
+    r"|\d{2}[-/]\d{2}[-/]\d{4}\s+\d{2}:\d{2}:\d{2}\.\d+"  # 03/06/2026 12:00:00.000
+    r"|\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}"  # 2024-01-15 10:30:00
+    r")",
+)
+EVENT_CODE_RE = re.compile(r"\b[A-Z]{2,4}-\d+[A-Z0-9]*\b")
+
+
+class TimestampedEventTextPipeline(DeterministicParserPipeline):
+    """Parser for timestamped plaintext event logs with optional continuation lines."""
+
+    parser_key = "timestamped_event"
+    structured_output = True
+
+    def _score_content(self, content: str) -> float:
+        lines = [line for line in content.splitlines()[:30] if line.strip()]
+        if not lines:
+            return 0.0
+
+        ts_hits = sum(1 for line in lines if TIMESTAMPED_LINE_RE.match(line))
+        if ts_hits == 0:
+            # Try multiline continuation detection for Java stack traces
+            continuation_hits = sum(1 for line in lines if MULTILINE_CONTINUATION_PATTERN.match(line))
+            if continuation_hits > 0 and ts_hits > 0:
+                return 0.7
+            if continuation_hits >= 3:
+                # Could be a stack trace file; check for timestamped lines too
+                iso_hits = sum(1 for line in lines if ISO_TIMESTAMP_RE.match(line))
+                if iso_hits > 0:
+                    return 0.7
+            return 0.0
+
+        ts_ratio = ts_hits / len(lines)
+        if ts_ratio >= 0.5:
+            return min(0.9, ts_ratio + 0.2)
+        if ts_ratio >= 0.2:
+            return ts_ratio + 0.1
+        return 0.0
+
+    def _parse_rows(self, content: str, filename: str) -> tuple[list[dict[str, Any]], list[str]]:
+        rows: list[dict[str, Any]] = []
+        warnings: list[str] = []
+        lines = content.splitlines()
+
+        events = self._cluster_events(lines, filename)
+        for event_index, event_lines in enumerate(events, start=1):
+            if not event_lines:
+                continue
+
+            row = self._parse_event(event_lines, filename, event_index)
+            rows.append(row)
+
+        if not rows:
+            warnings.append("No timestamped events found.")
+        return rows, warnings
+
+    @staticmethod
+    def _cluster_events(lines: list[str], filename: str) -> list[list[str]]:
+        """Group continuation lines into their parent event blocks."""
+        events: list[list[str]] = []
+        current: list[str] = []
+        for line in lines:
+            stripped = line.rstrip("\n")
+            if TIMESTAMPED_LINE_RE.match(stripped) or ISO_TIMESTAMP_RE.match(stripped):
+                if current:
+                    events.append(current)
+                current = [stripped]
+            elif current and MULTILINE_CONTINUATION_PATTERN.match(stripped):
+                current.append(stripped)
+            elif current:
+                # Non-timestamped, non-continuation: add to current if it looks related
+                if not stripped.strip():
+                    if current:
+                        events.append(current)
+                        current = []
+                else:
+                    current.append(stripped)
+            elif stripped.strip() and not current:
+                current = [stripped]
+
+        if current:
+            events.append(current)
+        return events
+
+    def _parse_event(self, event_lines: list[str], filename: str, event_index: int) -> dict[str, Any]:
+        head_line = event_lines[0]
+        row: dict[str, Any] = {
+            "source_file": filename,
+            "event_index": event_index,
+        }
+
+        # Extract timestamp
+        ts_match = TIMESTAMPED_LINE_RE.match(head_line)
+        if not ts_match:
+            ts_match = ISO_TIMESTAMP_RE.match(head_line)
+        if ts_match:
+            row["timestamp"] = ts_match.group(0)
+
+        # Infer log level
+        combined_text = " ".join(event_lines)
+        row["log_level"] = _infer_log_level(combined_text)
+
+        # Extract event codes like E2331, DW-20E2, ER-4102
+        event_codes = EVENT_CODE_RE.findall(combined_text)
+        if event_codes:
+            row["event_code"] = event_codes[0]
+
+        # Build message
+        if len(event_lines) == 1:
+            row["message"] = head_line[:500]
+        else:
+            # First line is the event header, continuation lines are the body/detail
+            row["header"] = head_line[:500]
+            body_lines = []
+            for line in event_lines[1:]:
+                body_lines.append(line.strip())
+            row["message"] = " ".join(body_lines)[:500]
+
+        row["raw"] = "\n".join(event_lines)[:4000]
+        row["source"] = filename
+        return row
 
 
 def _parse_access_rows(content: str, filename: str) -> tuple[list[dict[str, Any]], list[str]]:

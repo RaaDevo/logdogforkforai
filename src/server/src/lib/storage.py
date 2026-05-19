@@ -6,7 +6,7 @@ from botocore.exceptions import ClientError
 from fastapi import Depends
 from sqlalchemy.orm import Session
 
-from environment import BUCKET_ACCESS_KEY, BUCKET_ENDPOINT_URL, BUCKET_NAME, BUCKET_PREFIX, BUCKET_SECRET_KEY
+from environment import BUCKET_ACCESS_KEY, BUCKET_ENDPOINT_URL, BUCKET_NAME, BUCKET_PREFIX, BUCKET_REGION, BUCKET_SECRET_KEY
 from lib.database import get_database
 from lib.models import Asset
 
@@ -18,6 +18,7 @@ def _get_s3_client():
     if _s3_client is None:
         _s3_client = boto3.client(
             "s3",
+            region_name=BUCKET_REGION.get_secret_value(),
             endpoint_url=BUCKET_ENDPOINT_URL.get_secret_value(),
             aws_access_key_id=BUCKET_ACCESS_KEY.get_secret_value(),
             aws_secret_access_key=BUCKET_SECRET_KEY.get_secret_value(),

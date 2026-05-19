@@ -176,13 +176,19 @@ class _ParserRegistry:
                 KeyValuePipeline,
                 LogfmtPipeline,
                 NginxAccessPipeline,
+                SectionedKeyValuePipeline,
                 SyslogPipeline,
+                TimestampedEventTextPipeline,
                 XmlPipeline,
             )
 
+            # Structured formats first (higher priority)
             self.register(JsonLinesPipeline())
             self.register(XmlPipeline())
             self.register(CsvPipeline())
+            self.register(SectionedKeyValuePipeline())
+            self.register(TimestampedEventTextPipeline())
+            # Semi-structured / unstructured formats
             self.register(SyslogPipeline())
             self.register(ApacheAccessPipeline())
             self.register(NginxAccessPipeline())

@@ -25,6 +25,7 @@ BUCKET_ACCESS_KEY = _get_env_var("BUCKET_ACCESS_KEY")
 BUCKET_SECRET_KEY = _get_env_var("BUCKET_SECRET_KEY")
 BUCKET_NAME = _get_env_var("BUCKET_NAME")
 BUCKET_PREFIX = _get_env_var("BUCKET_PREFIX")
+BUCKET_REGION = _get_env_var("BUCKET_REGION", "auto")
 
 OPENROUTER_API_KEY = _get_env_var("OPENROUTER_API_KEY")
 OPENROUTER_TITLE = _get_env_var("OPENROUTER_TITLE", "Logdog")

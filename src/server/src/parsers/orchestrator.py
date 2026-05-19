@@ -341,7 +341,7 @@ def _parse_and_merge(file_inputs: list[FileInput], classification: Classificatio
         "per_table_null_ratios": {},
         "validation_warnings": [],
     }
-    structured_quality_gate_parsers = {"csv", "json_lines", "xml"}
+    structured_quality_gate_parsers = {"csv", "json_lines", "xml", "binary_hex", "sectioned_kv", "timestamped_event"}
 
     for parser_key, parser_inputs in grouped_inputs.items():
         try:
@@ -432,6 +432,9 @@ def _parser_key_for_file(detected_format: str) -> str:
         "nginx_access": "nginx_access",
         "logfmt": "logfmt",
         "key_value": "key_value",
+        "binary_hex": "binary_hex",
+        "sectioned_kv": "sectioned_kv",
+        "timestamped_event": "timestamped_event",
     }
     return parser_by_format.get(detected_format, "unified")
 

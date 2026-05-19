@@ -44,6 +44,9 @@ class DetectedFormat(str, Enum):
     NGINX_ACCESS = "nginx_access"
     LOGFMT = "logfmt"
     KEY_VALUE = "key_value"
+    BINARY_HEX = "binary_hex"
+    SECTIONED_KV = "sectioned_kv"
+    TIMESTAMPED_EVENT = "timestamped_event"
     PLAIN_TEXT = "plain_text"
     UNKNOWN = "unknown"
 
@@ -116,14 +119,37 @@ ISO_TIMESTAMP_PATTERN = re.compile(
     r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}",
 )
 
+# Flexible timestamp pattern: matches YYYY-MM-DD, MM/DD/YYYY, DD/MM/YYYY
+FLEXIBLE_TIMESTAMP_PATTERN = re.compile(
+    r"^(?:\d{4}-\d{2}-\d{2}[T ]|\d{2}[-/]\d{2}[-/]\d{4}\s+)\d{2}:\d{2}:\d{2}",
+)
+
 MULTILINE_CONTINUATION_PATTERN = re.compile(
-    r"^(?:\s+at\s|Caused by:|\.{3}\s*\d+\s*more|\s{4,}\S|\t\S)",
+    r"^(?:\s+at\s|Caused by:|\.{3}\s*\d+\s*more|\s{4,}\S)",
 )
 
 LOG_LEVEL_PATTERN = re.compile(
     r"\b(TRACE|DEBUG|INFO|WARN(?:ING)?|ERROR|FATAL|CRITICAL|NOTICE|ALERT|EMERG(?:ENCY)?)\b",
     re.IGNORECASE,
 )
+
+# Pattern for bracketed timestamps like [2026-04-17 08:03:15.441 UTC]
+BRACKETED_TIMESTAMP_PATTERN = re.compile(
+    r"^\[\s*\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{2}:\d{2}",
+)
+
+# Pattern for Windows Event style "Key: Value" lines
+COLON_SEPARATED_KV_PATTERN = re.compile(
+    r"^[A-Za-z][\w\s]+\s*:\s*.+",
+)
+
+# Pattern for "KEY=VALUE" lines in sectioned blocks
+EQUALS_KV_PATTERN = re.compile(
+    r"^[A-Z][A-Z_\d]+\s*=\s*.+",
+)
+
+# Pattern for blank-line separated blocks (sectioned content)
+SECTION_BOUNDARY_PATTERN = re.compile(r"^\s*$")
 
 
 class LogPreprocessorService:
@@ -441,6 +467,9 @@ class LogPreprocessorService:
             DetectedFormat.APACHE_ACCESS,
             DetectedFormat.NGINX_ACCESS,
             DetectedFormat.LOGFMT,
+            DetectedFormat.BINARY_HEX,
+            DetectedFormat.SECTIONED_KV,
+            DetectedFormat.TIMESTAMPED_EVENT,
         }:
             return StructuralClass.STRUCTURED
         if fmt == DetectedFormat.KEY_VALUE:
@@ -472,6 +501,9 @@ class LogPreprocessorService:
             DetectedFormat.NGINX_ACCESS.value: "nginx_access",
             DetectedFormat.LOGFMT.value: "logfmt",
             DetectedFormat.KEY_VALUE.value: "key_value",
+            DetectedFormat.BINARY_HEX.value: "binary_hex",
+            DetectedFormat.SECTIONED_KV.value: "sectioned_kv",
+            DetectedFormat.TIMESTAMPED_EVENT.value: "timestamped_event",
         }
         return parser_by_format.get(detected_format, "unified")
 
@@ -488,7 +520,12 @@ class LogPreprocessorService:
             fingerprint = FingerprintEngine().fingerprint(sample)
             mapped = self._map_fingerprint_format(fingerprint.format_name)
             if mapped is not None and fingerprint.confidence >= 0.85:
-                return mapped, round(min(fingerprint.confidence, 1.0), 2)
+                # Validate JSON fingerprint to avoid bracketed non-JSON content
+                if mapped == DetectedFormat.JSON_LINES:
+                    if not self._is_json_document(full_content):
+                        mapped = None
+                if mapped is not None:
+                    return mapped, round(min(fingerprint.confidence, 1.0), 2)
         except Exception as error:  # noqa: BLE001
             logger.debug("Fingerprint detection unavailable: %s", error)
 
@@ -529,6 +566,66 @@ class LogPreprocessorService:
         if kv_hits > 0 and DetectedFormat.LOGFMT not in scores:
             scores[DetectedFormat.KEY_VALUE] = kv_hits / len(sample) * 0.8
 
+        # Sectioned KV: blank-line-delimited blocks of "Key: Value" or "KEY=VALUE" lines
+        colon_kv_hits = sum(1 for line in sample if COLON_SEPARATED_KV_PATTERN.match(line))
+        equals_kv_hits = sum(1 for line in sample if EQUALS_KV_PATTERN.match(line))
+        blank_lines = sum(1 for line in lines[:50] if SECTION_BOUNDARY_PATTERN.match(line))
+        total_kv_lines = colon_kv_hits + equals_kv_hits
+        kv_ratio = total_kv_lines / max(len(sample), 1)
+        if total_kv_lines >= 2 and blank_lines >= 2 and kv_ratio >= 0.3:
+            sectioned_score = min(0.85, kv_ratio * 1.2)
+            scores[DetectedFormat.SECTIONED_KV] = sectioned_score
+            # Sectioned KV is more specific than generic key_value
+            scores.pop(DetectedFormat.KEY_VALUE, None)
+            # Only override timestamped event if KV lines dominate
+            if kv_ratio >= 0.5:
+                scores.pop(DetectedFormat.TIMESTAMPED_EVENT, None)
+
+        # Timestamped event text: lines starting with bracketed or ISO timestamps
+        # Don't detect as timestamped event if CSV/TSV is already detected
+        if DetectedFormat.CSV not in scores:
+            bracketed_ts_hits = sum(1 for line in sample if BRACKETED_TIMESTAMP_PATTERN.match(line))
+            iso_ts_hits = sum(1 for line in sample if ISO_TIMESTAMP_PATTERN.match(line))
+            flex_ts_hits = sum(1 for line in sample if FLEXIBLE_TIMESTAMP_PATTERN.match(line))
+            any_ts_hits = bracketed_ts_hits + iso_ts_hits + flex_ts_hits
+            if any_ts_hits > 0 and DetectedFormat.SECTIONED_KV not in scores and DetectedFormat.JSON_LINES not in scores:
+                ts_score = any_ts_hits / len(sample)
+                # Check for multiline continuation patterns
+                continuation_hits = sum(1 for line in sample if MULTILINE_CONTINUATION_PATTERN.match(line))
+                if continuation_hits > 0:
+                    ts_score = min(1.0, ts_score + continuation_hits / len(sample) * 0.3)
+                scores[DetectedFormat.TIMESTAMPED_EVENT] = ts_score
+                # Remove conflicting generic formats
+                scores.pop(DetectedFormat.PLAIN_TEXT, None)
+
+        # Binary/hex detection via content (hex dump with consecutive hex pairs)
+        if not scores.get(DetectedFormat.BINARY_HEX):
+            hex_dump_hits = sum(1 for line in sample[:10] if re.search(r"(?:[0-9a-fA-F]{2}[ :.\t]){5,}", line))
+            if hex_dump_hits >= 3:
+                scores[DetectedFormat.BINARY_HEX] = 0.85
+
+        # Binary content detection (e.g. .bin files read with errors='replace')
+        if DetectedFormat.BINARY_HEX not in scores and len(lines) >= 1:
+            sample_text = "\n".join(lines[:10])
+            # Check for null bytes (strong indicator of binary content)
+            if "\x00" in sample_text:
+                scores[DetectedFormat.BINARY_HEX] = 0.85
+            else:
+                try:
+                    import chardet
+                    raw_bytes = sample_text.encode("utf-8", errors="replace")
+                    result = chardet.detect(raw_bytes)
+                    if result and result.get("encoding") in ("binary", None) and result.get("confidence", 0) > 0.7:
+                        scores[DetectedFormat.BINARY_HEX] = 0.85
+                except ImportError:
+                    pass
+                except Exception:
+                    pass
+
+        # XML should win over key_value when XML is confidently detected
+        if DetectedFormat.XML in scores and scores[DetectedFormat.XML] >= 0.8:
+            scores.pop(DetectedFormat.KEY_VALUE, None)
+
         if not scores:
             return DetectedFormat.PLAIN_TEXT, 0.3
 
@@ -547,7 +644,7 @@ class LogPreprocessorService:
             "logfmt": DetectedFormat.LOGFMT,
             "key_value": DetectedFormat.KEY_VALUE,
             "section_delimited": DetectedFormat.KEY_VALUE,
-            "hex_dump": DetectedFormat.PLAIN_TEXT,
+            "hex_dump": DetectedFormat.BINARY_HEX,
             "plain_text": DetectedFormat.PLAIN_TEXT,
         }
         return mapping.get(format_name)
@@ -624,11 +721,19 @@ class LogPreprocessorService:
         document = "\n".join(lines).strip()
         if not document.startswith("<"):
             return 0.0
+        # Try full parse first
         try:
             ET.fromstring(document)
-            return 0.95
+            return 0.98
         except ET.ParseError:
-            return 0.0
+            pass
+        # For truncated XML (e.g. sampled first N lines), try partial parse
+        # by checking if a significant portion of lines look like XML tags
+        xml_tag_re = re.compile(r"^\s*(?:<\?xml|<[\w:!?])")
+        xml_lines = sum(1 for line in lines if xml_tag_re.match(line))
+        if len(lines) > 0 and xml_lines / len(lines) >= 0.6:
+            return 0.85
+        return 0.0
 
     @staticmethod
     def _score_csv(sample: list[str]) -> float:

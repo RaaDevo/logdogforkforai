@@ -1,5 +1,5 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { DownloadIcon, FileTextIcon, MoreHorizontalIcon, PencilIcon, Trash2Icon } from "lucide-react";
+import { createFileRoute } from "@tanstack/react-router";
+import { DownloadIcon, PencilIcon, Trash2Icon } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -16,18 +16,12 @@ import {
 } from "#/components/ui/alert-dialog";
 import { Button } from "#/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "#/components/ui/dialog";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "#/components/ui/dropdown-menu";
 import { Field, FieldContent, FieldError, FieldGroup, FieldLabel } from "#/components/ui/field";
 import { Input } from "#/components/ui/input";
 import { Skeleton } from "#/components/ui/skeleton";
 import { Spinner } from "#/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "#/components/ui/tabs";
+import { Tooltip, TooltipContent, TooltipTrigger } from "#/components/ui/tooltip";
 import {
   createLogProcess,
   deleteLogGroup,
@@ -43,10 +37,11 @@ import {
 import { PageHeader } from "#/routes/(platform)/-components/page-header";
 import { ChatbotTab } from "#/routes/(platform)/logs/-components/chatbot-tab";
 import { ProcessesTab } from "#/routes/(platform)/logs/-components/processes-tab";
+import { ReportTab } from "#/routes/(platform)/logs/-components/report-tab";
 import { TablesTab } from "#/routes/(platform)/logs/-components/tables-tab";
 import { UploadSection } from "#/routes/(platform)/logs/-components/upload-section";
 
-const logGroupTabs = ["data", "processes", "chat"] as const;
+const logGroupTabs = ["data", "processes", "chat", "report"] as const;
 type LogGroupTab = (typeof logGroupTabs)[number];
 
 type TableHighlightRequest = {
@@ -277,9 +272,15 @@ function LogGroupPage() {
     return [...names];
   }, [processes]);
 
+  const hasTables = tableNames.length > 0;
+
   const onTabChange = useCallback(
     (nextTab: string) => {
       if (!logGroupTabs.includes(nextTab as LogGroupTab)) {
+        return;
+      }
+
+      if (nextTab === "report" && !hasTables) {
         return;
       }
 
@@ -293,7 +294,7 @@ function LogGroupPage() {
         }),
       });
     },
-    [navigate],
+    [navigate, hasTables],
   );
 
   const onShowProcessTables = useCallback(
@@ -329,52 +330,48 @@ function LogGroupPage() {
       >
         {group !== null && (
           <>
-            <Button asChild size={"sm"} variant={"ghost"}>
-              <Link params={{ id }} to={"/logs/$id/report"}>
-                <FileTextIcon />
-                Generate Report
-              </Link>
-            </Button>
-            <Button
-              onClick={async () => {
-                try {
-                  const blob = await downloadWorkbookReport(id);
-                  const url = window.URL.createObjectURL(blob);
-                  const a = document.createElement("a");
-                  a.href = url;
-                  a.download = `logdog_workbook.xlsx`;
-                  document.body.appendChild(a);
-                  a.click();
-                  document.body.removeChild(a);
-                  window.URL.revokeObjectURL(url);
-                } catch (err) {
-                  toast.error(err instanceof Error ? err.message : "Download failed.");
-                }
-              }}
-              size={"sm"}
-              variant={"ghost"}
-            >
-              <DownloadIcon />
-              Download Workbook
-            </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button aria-label={"Options"} size={"icon-sm"} variant={"ghost"}>
-                  <MoreHorizontalIcon />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  onClick={async () => {
+                    try {
+                      const blob = await downloadWorkbookReport(id);
+                      const url = window.URL.createObjectURL(blob);
+                      const a = document.createElement("a");
+                      a.href = url;
+                      a.download = `logdog_workbook.xlsx`;
+                      document.body.appendChild(a);
+                      a.click();
+                      document.body.removeChild(a);
+                      window.URL.revokeObjectURL(url);
+                    } catch (err) {
+                      toast.error(err instanceof Error ? err.message : "Download failed.");
+                    }
+                  }}
+                  size={"icon-sm"}
+                  variant={"ghost"}
+                >
+                  <DownloadIcon />
                 </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align={"end"}>
-                <DropdownMenuItem onClick={openRenameDialog}>
+              </TooltipTrigger>
+              <TooltipContent>Download Workbook</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button onClick={openRenameDialog} size={"icon-sm"} variant={"ghost"}>
                   <PencilIcon />
-                  Rename
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => setIsDeleteAlertOpen(true)} variant={"destructive"}>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Rename Group</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button onClick={() => setIsDeleteAlertOpen(true)} size={"icon-sm"} variant={"ghost"}>
                   <Trash2Icon />
-                  Delete
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Delete Group</TooltipContent>
+            </Tooltip>
           </>
         )}
       </PageHeader>
@@ -390,7 +387,7 @@ function LogGroupPage() {
         {fetchError !== null && (
           <div className={"flex flex-col items-center gap-4 py-12 text-center"}>
             <p className={"text-destructive text-sm"}>{fetchError}</p>
-            <Button onClick={() => void fetchEntry()} size={"sm"} variant={"outline"}>
+            <Button onClick={() => void fetchGroup()} size={"sm"} variant={"outline"}>
               Try again
             </Button>
           </div>
@@ -402,6 +399,7 @@ function LogGroupPage() {
               <TabsTrigger value={"data"}>Data</TabsTrigger>
               <TabsTrigger value={"processes"}>Processes</TabsTrigger>
               <TabsTrigger value={"chat"}>Chat</TabsTrigger>
+              {hasTables && <TabsTrigger value={"report"}>Report</TabsTrigger>}
             </TabsList>
 
             <TabsContent className={"flex flex-col gap-6 p-4"} value={"data"}>
@@ -447,6 +445,10 @@ function LogGroupPage() {
 
             <TabsContent className={"flex min-h-[calc(100svh-10rem)] flex-col gap-3 p-4"} value={"chat"}>
               <ChatbotTab entryId={id} groupName={group?.name ?? "this log group"} tableNames={tableNames} />
+            </TabsContent>
+
+            <TabsContent className={"flex flex-col gap-6 p-4"} value={"report"}>
+              <ReportTab logGroupId={id} />
             </TabsContent>
           </Tabs>
         )}
