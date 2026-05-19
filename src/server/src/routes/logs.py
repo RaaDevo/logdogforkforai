@@ -467,7 +467,11 @@ def list_log_groups(
         .subquery()
     )
     entries = (
-        database.query(LogGroup, sa_func.coalesce(file_count_subq.c.file_count, 0), sa_func.coalesce(table_count_subq.c.table_count, 0))
+        database.query(
+            LogGroup,
+            sa_func.coalesce(file_count_subq.c.file_count, 0),
+            sa_func.coalesce(table_count_subq.c.table_count, 0),
+        )
         .outerjoin(file_count_subq, LogGroup.id == file_count_subq.c.group_id)
         .outerjoin(table_count_subq, LogGroup.id == table_count_subq.c.group_id)
         .filter(LogGroup.user_id == current_user.id)
@@ -1151,7 +1155,7 @@ def _fetch_group_table_context(group_id: str, database: Session) -> str:
 def _build_chat_system_prompt(group_name: str) -> str:
     return (
         "You are Logdog's AI log analysis assistant. "
-        f"You are helping the user analyze the log group \"{group_name}\".\n\n"
+        f'You are helping the user analyze the log group "{group_name}".\n\n'
         "Refer to this log group by its display name. Do not mention internal IDs or UUIDs.\n"
         "Answer the user's questions based on the log data context provided in the first message below. "
         "Be concise, accurate, and actionable. If the data is insufficient, say so."

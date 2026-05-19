@@ -62,7 +62,7 @@ const FEATURES = [
 const STATS = [
   { value: "100+", label: "Log formats supported" },
   { value: "<50ms", label: "Parse latency" },
-  { value: "Infinity", label: "Schema flexibility" },
+  { value: "∞", label: "Schema flexibility" },
 ];
 
 const STEPS = [
@@ -592,7 +592,7 @@ function LandingPage() {
             <img alt="Logdog" className="hidden h-9 w-auto dark:block" src="/logo-dark.png" />
           </div>
 
-          <p className={"text-xs text-zinc-600"}>Copyright 2026 Dennise Catolos. All logs welcome.</p>
+          <p className={"text-xs text-zinc-600"}>© 2026 Dennise Catolos. All logs welcome.</p>
 
           <div className={"flex gap-7 text-xs text-zinc-500"}>
             <a className={"transition-colors hover:text-zinc-300"} href={"https://dennise.me/privacy"}>

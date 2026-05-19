@@ -22,6 +22,7 @@ try:
 except ImportError:
     # Fallback definition if preprocessor can't be imported
     import re as _re
+
     MULTILINE_CONTINUATION_PATTERN = _re.compile(
         r"^(?:\s+at\s|Caused by:|\.{3}\s*\d+\s*more|\s{4,}\S)",
     )
@@ -926,7 +927,7 @@ class SyslogPipeline(DeterministicParserPipeline):
                 warnings.append(f"line {index}: not valid syslog format")
                 continue
 
-            message = (match.group("message") or "")
+            message = match.group("message") or ""
 
             row: dict[str, Any] = {
                 "timestamp": match.group("timestamp"),

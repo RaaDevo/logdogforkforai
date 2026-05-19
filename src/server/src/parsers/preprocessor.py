@@ -588,7 +588,11 @@ class LogPreprocessorService:
             iso_ts_hits = sum(1 for line in sample if ISO_TIMESTAMP_PATTERN.match(line))
             flex_ts_hits = sum(1 for line in sample if FLEXIBLE_TIMESTAMP_PATTERN.match(line))
             any_ts_hits = bracketed_ts_hits + iso_ts_hits + flex_ts_hits
-            if any_ts_hits > 0 and DetectedFormat.SECTIONED_KV not in scores and DetectedFormat.JSON_LINES not in scores:
+            if (
+                any_ts_hits > 0
+                and DetectedFormat.SECTIONED_KV not in scores
+                and DetectedFormat.JSON_LINES not in scores
+            ):
                 ts_score = any_ts_hits / len(sample)
                 # Check for multiline continuation patterns
                 continuation_hits = sum(1 for line in sample if MULTILINE_CONTINUATION_PATTERN.match(line))
@@ -613,6 +617,7 @@ class LogPreprocessorService:
             else:
                 try:
                     import chardet
+
                     raw_bytes = sample_text.encode("utf-8", errors="replace")
                     result = chardet.detect(raw_bytes)
                     if result and result.get("encoding") in ("binary", None) and result.get("confidence", 0) > 0.7:
