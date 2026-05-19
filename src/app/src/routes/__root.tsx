@@ -26,6 +26,12 @@ export const Route = createRootRoute({
       {
         rel: "icon",
         href: "/icon.png",
+        media: "(prefers-color-scheme: light)",
+      },
+      {
+        rel: "icon",
+        href: "/icon-dark.png",
+        media: "(prefers-color-scheme: dark)",
       },
       {
         rel: "stylesheet",

@@ -13,7 +13,6 @@ import {
   Shield,
   Zap,
 } from "lucide-react";
-import { useTheme } from "next-themes";
 import type { ReactNode } from "react";
 import { Button } from "#/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "#/components/ui/card";
@@ -98,8 +97,6 @@ const UNSTRUCTURED_FORMATS = [
 ];
 
 function LandingPage() {
-  const { resolvedTheme } = useTheme();
-
   return (
     <div className={"min-h-screen overflow-x-hidden bg-[#141414] text-[#f4f4f4]"}>
       <style>{`
@@ -141,9 +138,9 @@ function LandingPage() {
       />
 
       <nav className={"relative z-10 mx-auto flex max-w-7xl items-center justify-between px-6 py-4"}>
-        <div className={"flex items-center gap-2.5"}>
-          <img alt="Logdog" className="h-8 w-auto" src={resolvedTheme === "dark" ? "/icon-dark.png" : "/icon.png"} />
-          <span className={"font-bold text-lg tracking-tight"}>Logdog</span>
+        <div className={"flex items-center"}>
+          <img alt="Logdog" className="h-11 w-auto dark:hidden" src="/logo.png" />
+          <img alt="Logdog" className="hidden h-11 w-auto dark:block" src="/logo-dark.png" />
         </div>
 
         <div className={"hidden items-center gap-7 text-sm text-zinc-400 md:flex"}>
@@ -590,9 +587,9 @@ function LandingPage() {
 
       <footer className={"relative z-10 border-zinc-800/80 border-t px-6 py-10"}>
         <div className={"mx-auto flex max-w-7xl flex-col items-center justify-between gap-5 md:flex-row"}>
-          <div className={"flex items-center gap-2.5"}>
-            <img alt="Logdog" className="h-7 w-auto" src="/icon.png" />
-            <span className={"font-bold text-sm"}>Logdog</span>
+          <div className={"flex items-center"}>
+            <img alt="Logdog" className="h-9 w-auto dark:hidden" src="/logo.png" />
+            <img alt="Logdog" className="hidden h-9 w-auto dark:block" src="/logo-dark.png" />
           </div>
 
           <p className={"text-xs text-zinc-600"}>Copyright 2026 Dennise Catolos. All logs welcome.</p>

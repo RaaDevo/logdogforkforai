@@ -20,6 +20,7 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  useSidebar,
 } from "#/components/ui/sidebar";
 
 const navigation = [
@@ -28,6 +29,7 @@ const navigation = [
 ];
 
 export function AppSidebar() {
+  const { state } = useSidebar();
   const location = useLocation();
   const navigate = useNavigate();
   const { user, signOut } = useAuth();
@@ -42,7 +44,17 @@ export function AppSidebar() {
   return (
     <Sidebar collapsible={"icon"}>
       <SidebarHeader className={"h-12 shrink-0 items-center justify-center border-b px-4"}>
-        <span className={"font-semibold text-sm"}>Logdog</span>
+        {state === "collapsed" ? (
+          <>
+            <img alt="Logdog" className="h-6 w-auto dark:hidden" src="/icon.png" />
+            <img alt="Logdog" className="hidden h-6 w-auto dark:block" src="/icon-dark.png" />
+          </>
+        ) : (
+          <>
+            <img alt="Logdog" className="h-8 w-auto dark:hidden" src="/logo.png" />
+            <img alt="Logdog" className="hidden h-8 w-auto dark:block" src="/logo-dark.png" />
+          </>
+        )}
       </SidebarHeader>
 
       <SidebarContent>
