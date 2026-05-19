@@ -45,9 +45,8 @@ import { ChatbotTab } from "#/routes/(platform)/logs/-components/chatbot-tab";
 import { ProcessesTab } from "#/routes/(platform)/logs/-components/processes-tab";
 import { TablesTab } from "#/routes/(platform)/logs/-components/tables-tab";
 import { UploadSection } from "#/routes/(platform)/logs/-components/upload-section";
-import { QueryTab } from "#/routes/(platform)/logs/$id/-components/query-tab";
 
-const logGroupTabs = ["data", "processes", "query", "chat"] as const;
+const logGroupTabs = ["data", "processes", "chat"] as const;
 type LogGroupTab = (typeof logGroupTabs)[number];
 
 type TableHighlightRequest = {
@@ -402,7 +401,6 @@ function LogGroupPage() {
             <TabsList className={"w-full rounded-none border-b bg-sidebar"}>
               <TabsTrigger value={"data"}>Data</TabsTrigger>
               <TabsTrigger value={"processes"}>Processes</TabsTrigger>
-              <TabsTrigger value={"query"}>Query</TabsTrigger>
               <TabsTrigger value={"chat"}>Chat</TabsTrigger>
             </TabsList>
 
@@ -447,12 +445,8 @@ function LogGroupPage() {
               />
             </TabsContent>
 
-            <TabsContent className={"flex flex-col gap-3 p-4"} value={"query"}>
-              <QueryTab entryId={id} />
-            </TabsContent>
-
             <TabsContent className={"flex min-h-[calc(100svh-10rem)] flex-col gap-3 p-4"} value={"chat"}>
-              <ChatbotTab entryId={id} tableNames={tableNames} />
+              <ChatbotTab entryId={id} groupName={group?.name ?? "this log group"} tableNames={tableNames} />
             </TabsContent>
           </Tabs>
         )}

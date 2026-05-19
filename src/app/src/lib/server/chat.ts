@@ -134,6 +134,28 @@ function normalizeOrigin(origin: string) {
   return origin.endsWith("/") ? origin.slice(0, -1) : origin;
 }
 
+type LogGroupMetadata = {
+  id: string;
+  name: string;
+};
+
+async function fetchLogGroupMetadata(entryId: string, origin: string, authorizationHeader: string) {
+  const url = new URL(`/api/logs/${encodeURIComponent(entryId)}`, normalizeOrigin(origin));
+  const response = await fetch(url, {
+    headers: { Authorization: authorizationHeader },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch log group metadata (${response.status})`);
+  }
+
+  return (await response.json()) as LogGroupMetadata;
+}
+
+function normalizeGroupName(name: string): string {
+  return name.trim().replace(/\s+/g, " ").slice(0, 120);
+}
+
 async function fetchLogProcesses(entryId: string, origin: string, authorizationHeader: string) {
   const processUrl = new URL(`/api/logs/${encodeURIComponent(entryId)}/processes`, normalizeOrigin(origin));
   const response = await fetch(processUrl, {
@@ -298,10 +320,29 @@ function toTextModelMessages(messages: unknown[]) {
   return modelMessages;
 }
 
-function buildSystemPrompt(entryId: string) {
+/**
+ * Replaces occurrences of the raw entryId UUID in chat message text with the
+ * display group name, so the model never sees internal IDs in prior history.
+ */
+function sanitizeModelMessages(
+  messages: Array<ModelMessage<string>>,
+  entryId: string,
+  groupName: string,
+): Array<ModelMessage<string>> {
+  if (entryId.length === 0 || entryId === groupName) {
+    return messages;
+  }
+  return messages.map((msg) => ({
+    ...msg,
+    content: msg.content.replaceAll(entryId, `"${groupName}"`),
+  }));
+}
+
+function buildSystemPrompt(logGroupName: string) {
   return [
     "You are Logdog's data analyst assistant for a specific log group.",
-    `Log group id: ${entryId}.`,
+    `Current log group display name: "${logGroupName}".`,
+    "Refer to this log group by its display name. Do not mention internal IDs or UUIDs.",
     "Before any analysis or SQL assumptions, call list_available_tables(include_columns=true) to discover available data.",
     "If no tables are available, stop querying and tell the user to upload/process logs first.",
     "Use get_sql_command_templates to quickly choose valid exploration queries before writing custom SQL.",
@@ -578,6 +619,15 @@ export const streamLogChat = createServerFn({ method: "POST" })
       authorizationHeader,
     });
 
+    // Fetch the log group's friendly name so we never expose the raw UUID
+    // to the model or in the system prompt.
+    const groupMetadata = await fetchLogGroupMetadata(data.entryId, backendOrigin, authorizationHeader);
+    const logGroupName = normalizeGroupName(groupMetadata.name);
+
+    // Sanitize prior chat history: replace any occurrence of the internal
+    // entryId UUID with the display name so the model doesn't see stale IDs.
+    const sanitizedMessages = sanitizeModelMessages(modelMessages, data.entryId, logGroupName);
+
     const {
       openRouterApiKey: orApiKey,
       openRouterModel: orModel,
@@ -590,8 +640,8 @@ export const streamLogChat = createServerFn({ method: "POST" })
         xTitle: orTitle,
         httpReferer: orReferer,
       }),
-      messages: modelMessages,
-      systemPrompts: [buildSystemPrompt(data.entryId)],
+      messages: sanitizedMessages,
+      systemPrompts: [buildSystemPrompt(logGroupName)],
       tools,
     });
 

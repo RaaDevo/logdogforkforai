@@ -20,6 +20,7 @@ import { ChatMessageItem } from "#/routes/(platform)/logs/-components/chat-messa
 
 type ChatbotTabProps = {
   entryId: string;
+  groupName: string;
   tableNames: string[];
 };
 
@@ -84,6 +85,31 @@ function ErrorBadge({ label, message }: { label: string; message: string }) {
   );
 }
 
+type Suggestion = {
+  text: string;
+};
+
+function getNextMessageSuggestions(lastMessageIsAssistant: boolean, hasTables: boolean): Suggestion[] {
+  if (!lastMessageIsAssistant) {
+    return [];
+  }
+
+  if (hasTables) {
+    return [
+      { text: "Show a high-level summary" },
+      { text: "Find the most important anomalies" },
+      { text: "Create a chart of key trends" },
+      { text: "Generate a report" },
+    ];
+  }
+
+  return [
+    { text: "What data has been uploaded?" },
+    { text: "How do I process logs first?" },
+    { text: "What should I upload next?" },
+  ];
+}
+
 function messagesEqual(a: UIMessage[], b: UIMessage[]) {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
@@ -94,7 +120,7 @@ function messagesEqual(a: UIMessage[], b: UIMessage[]) {
   return true;
 }
 
-export function ChatbotTab({ entryId, tableNames }: ChatbotTabProps) {
+export function ChatbotTab({ entryId, groupName, tableNames }: ChatbotTabProps) {
   const [draftMessage, setDraftMessage] = useState("");
   const [hydrateError, setHydrateError] = useState<string | null>(null);
   const [persistError, setPersistError] = useState<string | null>(null);
@@ -250,6 +276,14 @@ export function ChatbotTab({ entryId, tableNames }: ChatbotTabProps) {
 
   const visibleMessages = useMemo(() => messages.filter(hasVisibleContent), [messages]);
   const hasMessages = visibleMessages.length > 0;
+  const lastMessageIsAssistant = useMemo(
+    () => hasMessages && visibleMessages[visibleMessages.length - 1].role === "assistant",
+    [hasMessages, visibleMessages],
+  );
+  const suggestions = useMemo(
+    () => getNextMessageSuggestions(lastMessageIsAssistant, tableNames.length > 0),
+    [lastMessageIsAssistant, tableNames.length],
+  );
 
   return (
     <div className={"flex min-h-0 flex-1 flex-col"}>
@@ -285,7 +319,7 @@ export function ChatbotTab({ entryId, tableNames }: ChatbotTabProps) {
               <div className={"flex flex-col gap-1.5"}>
                 <h2 className={"font-semibold text-xl"}>Log Analysis Chatbot</h2>
                 <p className={"mx-auto max-w-sm text-muted-foreground text-sm"}>
-                  Ask questions about your log data. I can query tables, find anomalies, generate charts, and compile
+                  Ask questions about {groupName}. I can query tables, find anomalies, generate charts, and compile
                   reports.
                 </p>
               </div>
@@ -308,7 +342,7 @@ export function ChatbotTab({ entryId, tableNames }: ChatbotTabProps) {
         ) : (
           <div className={"mx-auto w-full max-w-3xl space-y-4 px-4 py-6"}>
             {visibleMessages.map((message) => (
-              <ChatMessageItem key={message.id} message={message} />
+              <ChatMessageItem entryId={entryId} groupName={groupName} key={message.id} message={message} />
             ))}
             <div ref={messagesEndRef} />
           </div>
@@ -348,6 +382,23 @@ export function ChatbotTab({ entryId, tableNames }: ChatbotTabProps) {
                 <Trash2Icon className={"size-3 shrink-0"} />
                 <span className={"truncate"}>Clear Chat</span>
               </Button>
+            </div>
+          )}
+
+          {hasMessages && suggestions.length > 0 && !isLoading && (
+            <div className={"flex flex-wrap items-center gap-2 px-4 pb-2"}>
+              {suggestions.map((suggestion) => (
+                <Button
+                  className={"h-auto gap-2 px-3 py-1.5 text-xs"}
+                  key={suggestion.text}
+                  onClick={() => void sendMessage(suggestion.text)}
+                  size={"sm"}
+                  variant={"outline"}
+                >
+                  <SparklesIcon className={"size-3 shrink-0 text-muted-foreground"} />
+                  {suggestion.text}
+                </Button>
+              ))}
             </div>
           )}
 

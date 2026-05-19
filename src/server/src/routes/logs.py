@@ -19,7 +19,7 @@ from openpyxl import Workbook
 from openpyxl.chart import BarChart, Reference
 from openpyxl.styles import Font
 from pydantic import BaseModel, Field
-from sqlalchemy import text as sa_text
+from sqlalchemy import func as sa_func, text as sa_text
 from sqlalchemy.orm import Session
 
 from lib.database import get_database
@@ -29,7 +29,7 @@ from lib.megabase import drop_table as megabase_drop_table
 from lib.megabase import init_megabase
 from lib.megabase import query_records as megabase_query_records
 from lib.ai import get_generative_model
-from lib.models import Asset, LogGroup, LogFile, LogMessage, LogNlQuery, LogProcess, LogReport, LogTable, User
+from lib.models import Asset, LogGroup, LogFile, LogMessage, LogProcess, LogReport, LogTable, User
 from lib.storage import delete_file, download_file, upload_file
 from parsers.orchestrator import create_process, enqueue_process, mark_process_failed
 from routes.auth import get_current_user
@@ -62,6 +62,8 @@ class LogGroupResponse(BaseModel):
     name: str
     profile_name: str | None
     created_at: datetime
+    file_count: int = 0
+    table_count: int = 0
 
 
 class LogFileResponse(BaseModel):
@@ -171,16 +173,6 @@ class ReportSectionRequest(BaseModel):
 class ReportRequest(BaseModel):
     title: str
     sections: list[ReportSectionRequest]
-
-
-class NlQueryRequest(BaseModel):
-    question: str
-
-
-class NlQueryResponse(BaseModel):
-    sql: str
-    results: list[dict[str, Any]]
-    columns: list[str]
 
 
 FORBIDDEN_SQL_KEYWORDS = re.compile(
@@ -324,13 +316,15 @@ def _parse_message_payload(payload: str | None, role: str, content: str):
     return {"role": role, "content": content}
 
 
-def _group_response(group: LogGroup):
+def _group_response(group: LogGroup, file_count: int = 0, table_count: int = 0):
     return LogGroupResponse(
         id=str(group.id),
         user_id=str(group.user_id),
         name=group.name,
         profile_name=group.profile_name,
         created_at=group.created_at,
+        file_count=file_count,
+        table_count=table_count,
     )
 
 
@@ -462,10 +456,25 @@ def list_log_groups(
     current_user: User = Depends(get_current_user),
     database: Session = Depends(get_database),
 ):
-    entries = (
-        database.query(LogGroup).filter(LogGroup.user_id == current_user.id).order_by(LogGroup.created_at.desc()).all()
+    file_count_subq = (
+        database.query(LogFile.group_id, sa_func.count(LogFile.id).label("file_count"))
+        .group_by(LogFile.group_id)
+        .subquery()
     )
-    return [_group_response(group) for group in entries]
+    table_count_subq = (
+        database.query(LogTable.group_id, sa_func.count(LogTable.id).label("table_count"))
+        .group_by(LogTable.group_id)
+        .subquery()
+    )
+    entries = (
+        database.query(LogGroup, sa_func.coalesce(file_count_subq.c.file_count, 0), sa_func.coalesce(table_count_subq.c.table_count, 0))
+        .outerjoin(file_count_subq, LogGroup.id == file_count_subq.c.group_id)
+        .outerjoin(table_count_subq, LogGroup.id == table_count_subq.c.group_id)
+        .filter(LogGroup.user_id == current_user.id)
+        .order_by(LogGroup.created_at.desc())
+        .all()
+    )
+    return [_group_response(group, file_count=fcount, table_count=tcount) for group, fcount, tcount in entries]
 
 
 @router.post("", response_model=LogGroupResponse, status_code=status.HTTP_201_CREATED)
@@ -494,7 +503,9 @@ def get_log_group(
     database: Session = Depends(get_database),
 ):
     group = _require_owned_group(database=database, group_id=group_id, user_id=current_user.id)
-    return _group_response(group)
+    file_count = database.query(sa_func.count(LogFile.id)).filter(LogFile.group_id == group.id).scalar()
+    table_count = database.query(sa_func.count(LogTable.id)).filter(LogTable.group_id == group.id).scalar()
+    return _group_response(group, file_count=file_count, table_count=table_count)
 
 
 @router.patch("/{group_id}", response_model=LogGroupResponse)
@@ -1137,10 +1148,11 @@ def _fetch_group_table_context(group_id: str, database: Session) -> str:
     return "\n".join(lines)
 
 
-def _build_chat_system_prompt(group_id: str) -> str:
+def _build_chat_system_prompt(group_name: str) -> str:
     return (
         "You are Logdog's AI log analysis assistant. "
-        f"You are helping the user analyze log group {group_id}.\n\n"
+        f"You are helping the user analyze the log group \"{group_name}\".\n\n"
+        "Refer to this log group by its display name. Do not mention internal IDs or UUIDs.\n"
         "Answer the user's questions based on the log data context provided in the first message below. "
         "Be concise, accurate, and actionable. If the data is insufficient, say so."
     )
@@ -1155,8 +1167,9 @@ def stream_chat(
 ):
     group = _require_owned_group(database=database, group_id=group_id, user_id=current_user.id)
     table_context = _fetch_group_table_context(str(group.id), database)
+    group_name = (group.name or "").strip().replace("\n", " ")[:120] or f"log group {group_id}"
 
-    system_prompt = _build_chat_system_prompt(str(group.id))
+    system_prompt = _build_chat_system_prompt(group_name)
 
     model = get_generative_model()
     messages: list[tuple[str, str]] = [("system", system_prompt)]
@@ -1269,94 +1282,6 @@ def get_insights(
         return None
 
     return LogInsightReport(**log_report.content)
-
-
-@router.post("/{group_id}/nl-query", response_model=NlQueryResponse)
-def execute_nl_query(
-    group_id: str,
-    payload: NlQueryRequest,
-    current_user: User = Depends(get_current_user),
-    database: Session = Depends(get_database),
-):
-    group = _require_owned_group(database=database, group_id=group_id, user_id=current_user.id)
-    allowed_tables = _get_group_table_names(database, str(group.id))
-
-    if not allowed_tables:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No tables available for this log group.")
-
-    schema_lines = []
-    for table_name in sorted(allowed_tables):
-        table_info = (
-            database.query(LogTable).filter(LogTable.group_id == group.id, LogTable.table == table_name).first()
-        )
-        if table_info:
-            schema_lines.append(f'Table "{table_name}": {table_info.schema}')
-        else:
-            schema_lines.append(f'Table "{table_name}"')
-
-    schema_context = "\n".join(schema_lines)
-    system_prompt = (
-        "You are a SQL expert. Generate a valid SELECT query for SQLite/SQLAlchemy based on the user's question. "
-        "Use double quotes around table and column identifiers. Only return the SQL query, no explanation."
-    )
-    prompt = (
-        f"Available tables:\n{schema_context}\n\n"
-        f"Question: {payload.question}\n\n"
-        "Generate a SELECT SQL query to answer this question."
-    )
-
-    model = get_generative_model()
-    raw_sql = model.generate(prompt, system_prompt=system_prompt).strip()
-
-    sql_lines = [line for line in raw_sql.splitlines() if not line.strip().startswith("```")]
-    sql_text = " ".join(sql_lines).strip()
-    if sql_text.startswith("```"):
-        sql_text = sql_text[3:].strip()
-    if sql_text.endswith("```"):
-        sql_text = sql_text[:-3].strip()
-
-    if not sql_text:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Generated SQL is empty.")
-
-    if FORBIDDEN_SQL_KEYWORDS.search(sql_text):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only SELECT queries are allowed.")
-
-    parsed = sqlparse.parse(sql_text)
-    for statement in parsed:
-        if statement.get_type() != "SELECT" and statement.get_type() is not None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Statement type '{statement.get_type()}' is not allowed. Only SELECT is permitted.",
-            )
-
-    table_error = _validate_table_allowlist(sql_text, allowed_tables)
-    if table_error:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=table_error)
-
-    sql_text = _inject_sql_limit(sql_text, max_rows=QUERY_RESULT_LIMIT)
-
-    megabase_database = MegabaseSessionLocal()
-    try:
-        init_megabase(megabase_database)
-        result = megabase_database.execute(sa_text(sql_text))
-        columns = [str(col) for col in result.keys()]
-        rows = result.fetchall() if result.returns_rows else []
-        results = [dict(zip(columns, row)) for row in rows]
-
-        nl_query = LogNlQuery(
-            group_id=group.id,
-            question=payload.question,
-            generated_sql=sql_text,
-            results_json=results,
-        )
-        database.add(nl_query)
-        database.commit()
-
-        return NlQueryResponse(sql=sql_text, results=results, columns=columns)
-    except Exception as error:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Query execution failed: {error}")
-    finally:
-        megabase_database.close()
 
 
 def _get_group_table_names(database: Session, group_id: str) -> set[str]:

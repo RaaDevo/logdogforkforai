@@ -1,10 +1,8 @@
 import os
-from pathlib import Path
-
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 from pydantic import SecretStr
 
-load_dotenv(dotenv_path=Path(__file__).resolve().parents[3] / ".env")
+load_dotenv(find_dotenv())
 
 
 def _get_env_var(key: str, defaultValue: str | None = None) -> SecretStr:
@@ -29,6 +27,6 @@ BUCKET_NAME = _get_env_var("BUCKET_NAME")
 BUCKET_PREFIX = _get_env_var("BUCKET_PREFIX")
 
 OPENROUTER_API_KEY = _get_env_var("OPENROUTER_API_KEY")
-OPENROUTER_TITLE = _get_env_var("OPENROUTER_TITLE")
-OPENROUTER_REFERER = _get_env_var("OPENROUTER_REFERER")
-OPENROUTER_MODEL = _get_env_var("OPENROUTER_MODEL", "deepseek/deepseek-v4-flash")
+OPENROUTER_TITLE = _get_env_var("OPENROUTER_TITLE", "Logdog")
+OPENROUTER_REFERER = _get_env_var("OPENROUTER_REFERER", "https://dennise.me")
+OPENROUTER_MODEL = _get_env_var("OPENROUTER_MODEL", "openrouter/auto")

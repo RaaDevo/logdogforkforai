@@ -94,7 +94,7 @@ function LogsPage() {
           <DialogTrigger asChild>
             <Button size={"sm"}>
               <PlusIcon />
-              New Log Group
+              New
             </Button>
           </DialogTrigger>
         </PageHeader>
@@ -144,7 +144,11 @@ function LogsPage() {
                   <Skeleton className={"h-4 w-40"} />
                   <Skeleton className={"h-3 w-24"} />
                 </div>
-                <Skeleton className={"ml-auto size-4 rounded-full"} />
+                <div className={"ml-auto flex items-center gap-3"}>
+                  <Skeleton className={"h-3 w-16"} />
+                  <Skeleton className={"h-3 w-16"} />
+                  <Skeleton className={"size-4 rounded-full"} />
+                </div>
               </div>
             ))}
           </div>
@@ -184,7 +188,7 @@ function LogsPage() {
                 params={{ id: group.id }}
                 to={"/logs/$id"}
               >
-                <div className={"flex flex-col gap-0.5"}>
+                <div className={"flex min-w-0 flex-col gap-0.5"}>
                   <span className={"font-medium text-sm"}>{group.name}</span>
                   <span className={"text-muted-foreground text-xs"}>
                     {new Date(group.created_at).toLocaleDateString("en-US", {
@@ -194,9 +198,15 @@ function LogsPage() {
                     })}
                   </span>
                 </div>
-                <ChevronRightIcon
-                  className={"ml-auto size-4 text-muted-foreground transition-transform group-hover:translate-x-0.5"}
-                />
+                <div className={"ml-auto flex items-center gap-3 text-muted-foreground text-xs tabular-nums"}>
+                  <span>
+                    {group.file_count} file{group.file_count !== 1 ? "s" : ""}
+                  </span>
+                  <span>
+                    {group.table_count} table{group.table_count !== 1 ? "s" : ""}
+                  </span>
+                  <ChevronRightIcon className={"size-4 transition-transform group-hover:translate-x-0.5"} />
+                </div>
               </Link>
             ))}
           </div>

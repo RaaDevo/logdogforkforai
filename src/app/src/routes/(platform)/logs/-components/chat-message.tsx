@@ -8,7 +8,16 @@ import { Button } from "#/components/ui/button";
 
 type ChatMessageItemProps = {
   message: UIMessage;
+  entryId?: string;
+  groupName?: string;
 };
+
+function redactEntryId(text: string, entryId?: string, groupName?: string): string {
+  if (!entryId || !groupName || entryId === groupName || entryId.length === 0) {
+    return text;
+  }
+  return text.replaceAll(entryId, groupName);
+}
 
 function parseTextFromMessage(message: UIMessage) {
   return message.parts
@@ -52,9 +61,12 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-export function ChatMessageItem({ message }: ChatMessageItemProps) {
+export function ChatMessageItem({ message, entryId, groupName }: ChatMessageItemProps) {
   const isUser = message.role === "user";
-  const text = parseTextFromMessage(message);
+  const rawText = parseTextFromMessage(message);
+  // Redact the internal entryId UUID from assistant messages so users never
+  // see raw identifiers in rendered text or when copying.
+  const text = isUser ? rawText : redactEntryId(rawText, entryId, groupName);
   const toolCallCount = message.parts.filter((part) => part.type === "tool-call").length;
 
   if (text.length === 0) {

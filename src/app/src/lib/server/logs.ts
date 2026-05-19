@@ -6,6 +6,8 @@ export type LogGroup = {
   name: string;
   profile_name?: string | null;
   created_at: string;
+  file_count: number;
+  table_count: number;
 };
 
 export type LogFile = {
@@ -333,23 +335,6 @@ export async function generateLogReport(entryId: string) {
     body: JSON.stringify({}),
   });
   return parseJsonResponse<LogInsightReport>(response);
-}
-
-export type NlQueryResult = {
-  sql: string;
-  results: Array<Record<string, unknown>>;
-  columns: string[];
-};
-
-export async function executeNlQuery(entryId: string, question: string) {
-  const response = await $fetch(`/logs/${entryId}/nl-query`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ question }),
-  });
-  return parseJsonResponse<NlQueryResult>(response);
 }
 
 export async function getLogChatMessages(entryId: string) {
