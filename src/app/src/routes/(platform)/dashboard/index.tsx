@@ -15,7 +15,7 @@ import { type DashboardStats, getDashboardStats } from "#/lib/server";
 import { PageHeader } from "#/routes/(platform)/-components/page-header";
 import { StatCard } from "#/routes/(platform)/dashboard/-components/stat-card";
 
-const CHART_COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#06b6d4", "#84cc16"];
+const CHART_COLORS = ["#F9F618", "#F4F4F4", "#9A9A9A", "#404040", "#D9D9D9", "#6B6B6B", "#C8C8C8", "#141414"];
 
 const processStatusChartConfig = {
   queued: { label: "Queued", color: CHART_COLORS[0] },

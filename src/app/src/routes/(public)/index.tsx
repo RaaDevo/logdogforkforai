@@ -13,6 +13,7 @@ import {
   Shield,
   Zap,
 } from "lucide-react";
+import { useTheme } from "next-themes";
 import type { ReactNode } from "react";
 import { Button } from "#/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "#/components/ui/card";
@@ -97,8 +98,10 @@ const UNSTRUCTURED_FORMATS = [
 ];
 
 function LandingPage() {
+  const { resolvedTheme } = useTheme();
+
   return (
-    <div className={"min-h-screen overflow-x-hidden bg-[#070b0f] text-white"}>
+    <div className={"min-h-screen overflow-x-hidden bg-[#141414] text-[#f4f4f4]"}>
       <style>{`
         @keyframes scroll-logs {
           0% { transform: translateY(0); }
@@ -125,7 +128,7 @@ function LandingPage() {
         className={"pointer-events-none fixed inset-0 select-none"}
         style={{
           backgroundImage:
-            "linear-gradient(to right, rgba(255,255,255,0.035) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,0.035) 1px, transparent 1px)",
+            "linear-gradient(to right, rgba(244,244,244,0.035) 1px, transparent 1px), linear-gradient(to bottom, rgba(244,244,244,0.035) 1px, transparent 1px)",
           backgroundSize: "72px 72px",
         }}
       />
@@ -133,13 +136,13 @@ function LandingPage() {
       <div
         className={"pointer-events-none fixed inset-0 select-none"}
         style={{
-          background: "radial-gradient(ellipse 90% 45% at 50% -5%, rgba(245, 158, 11, 0.07) 0%, transparent 65%)",
+          background: "radial-gradient(ellipse 90% 45% at 50% -5%, rgba(249, 246, 24, 0.09) 0%, transparent 65%)",
         }}
       />
 
       <nav className={"relative z-10 mx-auto flex max-w-7xl items-center justify-between px-6 py-4"}>
         <div className={"flex items-center gap-2.5"}>
-          <img alt="Logdog" className="h-8 w-auto" src="/icon.png" />
+          <img alt="Logdog" className="h-8 w-auto" src={resolvedTheme === "dark" ? "/icon-dark.png" : "/icon.png"} />
           <span className={"font-bold text-lg tracking-tight"}>Logdog</span>
         </div>
 
@@ -166,7 +169,7 @@ function LandingPage() {
           </Button>
           <Button
             asChild
-            className={"bg-amber-400 font-semibold text-zinc-900 shadow-none hover:bg-amber-300"}
+            className={"bg-[#F9F618] font-semibold text-[#141414] shadow-none hover:bg-[#F9F618]/90"}
             size={"sm"}
           >
             <Link to={"/auth/new"}>Get started</Link>
@@ -182,7 +185,7 @@ function LandingPage() {
         >
           Parse any log.
           <br />
-          <span className={"text-amber-400"}>Understand everything.</span>
+          <span className={"text-[#F9F618]"}>Understand everything.</span>
         </h1>
 
         <p
@@ -198,7 +201,7 @@ function LandingPage() {
           <Button
             asChild
             className={
-              "h-12 gap-2 bg-amber-400 px-7 font-semibold text-base text-zinc-900 shadow-none hover:bg-amber-300"
+              "h-12 gap-2 bg-[#F9F618] px-7 font-semibold text-[#141414] text-base shadow-none hover:bg-[#F9F618]/90"
             }
             size={"lg"}
           >
@@ -223,7 +226,7 @@ function LandingPage() {
           <div
             className={"pointer-events-none absolute -inset-12 rounded-3xl"}
             style={{
-              background: "radial-gradient(ellipse at center, rgba(245,158,11,0.055) 0%, transparent 65%)",
+              background: "radial-gradient(ellipse at center, rgba(249,246,24,0.085) 0%, transparent 65%)",
             }}
           />
 
@@ -258,7 +261,7 @@ function LandingPage() {
                       <p>
                         <span className={"text-zinc-600"}>192.168.1.2</span> - alice [05/Mar/2026:14:22:31]{" "}
                         <span className={"text-zinc-400"}>"POST /api/login HTTP/1.1"</span>{" "}
-                        <span className={"text-amber-400"}>401</span> 1247
+                        <span className={"text-[#F9F618]"}>401</span> 1247
                       </p>
                       <p>
                         <span
@@ -306,11 +309,11 @@ function LandingPage() {
                 <p className={"mb-1 text-zinc-600"}>{`// 1,042 rows - 9 fields extracted`}</p>
                 <p>
                   <span className={"text-violet-400"}>timestamp</span> <span className={"text-zinc-600"}>-&gt;</span>{" "}
-                  <span className={"text-amber-300"}>"2026-03-05T14:22:31Z"</span>
+                  <span className={"text-[#F9F618]"}>"2026-03-05T14:22:31Z"</span>
                 </p>
                 <p>
                   <span className={"text-violet-400"}>source_ip</span> <span className={"text-zinc-600"}>-&gt;</span>{" "}
-                  <span className={"text-amber-300"}>"192.168.1.2"</span>
+                  <span className={"text-[#F9F618]"}>"192.168.1.2"</span>
                 </p>
                 <p>
                   <span className={"text-violet-400"}>user</span> <span className={"text-zinc-600"}>-&gt;</span>{" "}
@@ -326,7 +329,7 @@ function LandingPage() {
                 </p>
                 <p>
                   <span className={"text-violet-400"}>status</span> <span className={"text-zinc-600"}>-&gt;</span>{" "}
-                  <span className={"text-amber-400"}>401</span>
+                  <span className={"text-[#F9F618]"}>401</span>
                 </p>
                 <p>
                   <span className={"text-violet-400"}>format</span> <span className={"text-zinc-600"}>-&gt;</span>{" "}
@@ -339,12 +342,12 @@ function LandingPage() {
       </section>
 
       <div className={"relative z-10 mx-auto max-w-7xl px-6"}>
-        <Separator className={"bg-zinc-800/80"} />
+        <Separator className={"bg-[#404040]/80"} />
       </div>
 
       <section className={"relative z-10 mx-auto max-w-7xl px-6 py-24"} id={"formats"}>
         <div className={"mb-14 text-center"}>
-          <p className={"mb-3 font-mono text-amber-400 text-xs uppercase tracking-[0.2em]"}>Universal compatibility</p>
+          <p className={"mb-3 font-mono text-[#F9F618] text-xs uppercase tracking-[0.2em]"}>Universal compatibility</p>
           <h2 className={"mb-4 font-bold text-4xl tracking-tight md:text-5xl"}>Every format. One parser.</h2>
           <p className={"mx-auto max-w-xl text-lg text-zinc-400"}>
             Whether your logs come from modern services or legacy systems, Logdog handles it.
@@ -361,7 +364,7 @@ function LandingPage() {
             <TabsTrigger
               className={cn(
                 "rounded-md px-5 py-2 font-medium text-sm text-zinc-400 transition-all",
-                "data-[state=active]:bg-amber-400 data-[state=active]:font-semibold data-[state=active]:text-zinc-900 data-[state=active]:shadow-none",
+                "data-[state=active]:bg-[#F9F618] data-[state=active]:font-semibold data-[state=active]:text-[#141414] data-[state=active]:shadow-none",
                 "hover:text-zinc-200",
               )}
               value={"structured"}
@@ -372,7 +375,7 @@ function LandingPage() {
             <TabsTrigger
               className={cn(
                 "rounded-md px-5 py-2 font-medium text-sm text-zinc-400 transition-all",
-                "data-[state=active]:bg-amber-400 data-[state=active]:font-semibold data-[state=active]:text-zinc-900 data-[state=active]:shadow-none",
+                "data-[state=active]:bg-[#F9F618] data-[state=active]:font-semibold data-[state=active]:text-[#141414] data-[state=active]:shadow-none",
                 "hover:text-zinc-200",
               )}
               value={"semi"}
@@ -383,7 +386,7 @@ function LandingPage() {
             <TabsTrigger
               className={cn(
                 "rounded-md px-5 py-2 font-medium text-sm text-zinc-400 transition-all",
-                "data-[state=active]:bg-amber-400 data-[state=active]:font-semibold data-[state=active]:text-zinc-900 data-[state=active]:shadow-none",
+                "data-[state=active]:bg-[#F9F618] data-[state=active]:font-semibold data-[state=active]:text-[#141414] data-[state=active]:shadow-none",
                 "hover:text-zinc-200",
               )}
               value={"unstructured"}
@@ -464,7 +467,7 @@ function LandingPage() {
       >
         <div className={"mx-auto max-w-7xl"}>
           <div className={"mb-16 text-center"}>
-            <p className={"mb-3 font-mono text-amber-400 text-xs uppercase tracking-[0.2em]"}>Simple by design</p>
+            <p className={"mb-3 font-mono text-[#F9F618] text-xs uppercase tracking-[0.2em]"}>Simple by design</p>
             <h2 className={"font-bold text-4xl tracking-tight md:text-5xl"}>
               From raw chaos to clean data
               <br />
@@ -489,7 +492,7 @@ function LandingPage() {
                     "relative h-full rounded-2xl border border-zinc-800 bg-zinc-900/40 p-8 transition-all duration-200 hover:border-zinc-700 hover:bg-zinc-900/70"
                   }
                 >
-                  <div className={"mb-5 select-none font-black font-mono text-6xl text-amber-400/15 leading-none"}>
+                  <div className={"mb-5 select-none font-black font-mono text-6xl text-[#F9F618]/20 leading-none"}>
                     {number}
                   </div>
                   <h3 className={"mb-3 font-semibold text-xl"}>{title}</h3>
@@ -504,7 +507,7 @@ function LandingPage() {
 
       <section className={"relative z-10 mx-auto max-w-7xl px-6 py-24"} id={"features"}>
         <div className={"mb-16 text-center"}>
-          <p className={"mb-3 font-mono text-amber-400 text-xs uppercase tracking-[0.2em]"}>What you get</p>
+          <p className={"mb-3 font-mono text-[#F9F618] text-xs uppercase tracking-[0.2em]"}>What you get</p>
           <h2 className={"mb-4 font-bold text-4xl tracking-tight md:text-5xl"}>The whole pipeline, built in.</h2>
           <p className={"mx-auto max-w-xl text-lg text-zinc-400"}>
             Logdog is not only a parser. It is the ingestion-to-insight workflow designed for operations.
@@ -522,10 +525,10 @@ function LandingPage() {
               <CardHeader className={"pb-0"}>
                 <div
                   className={
-                    "mb-1 flex size-10 items-center justify-center rounded-lg border border-amber-400/20 bg-amber-400/10 transition-colors group-hover:bg-amber-400/15"
+                    "mb-1 flex size-10 items-center justify-center rounded-lg border border-[#F9F618]/30 bg-[#F9F618]/10 transition-colors group-hover:bg-[#F9F618]/20"
                   }
                 >
-                  <Icon className={"size-5 text-amber-400"} />
+                  <Icon className={"size-5 text-[#F9F618]"} />
                 </div>
                 <CardTitle className={"font-semibold text-base text-white"}>{title}</CardTitle>
               </CardHeader>
@@ -544,7 +547,7 @@ function LandingPage() {
         >
           {STATS.map(({ value, label }) => (
             <div className={"p-10 text-center"} key={label}>
-              <div className={"mb-2 font-black font-mono text-5xl text-amber-400"}>{value}</div>
+              <div className={"mb-2 font-black font-mono text-5xl text-[#F9F618]"}>{value}</div>
               <div className={"text-sm text-zinc-400"}>{label}</div>
             </div>
           ))}
@@ -555,11 +558,11 @@ function LandingPage() {
         <div
           className={"pointer-events-none absolute inset-0"}
           style={{
-            background: "radial-gradient(ellipse 70% 70% at 50% 50%, rgba(245,158,11,0.055) 0%, transparent 65%)",
+            background: "radial-gradient(ellipse 70% 70% at 50% 50%, rgba(249,246,24,0.085) 0%, transparent 65%)",
           }}
         />
         <div className={"relative"}>
-          <p className={"mb-5 font-mono text-amber-400 text-xs uppercase tracking-[0.2em]"}>Get started free</p>
+          <p className={"mb-5 font-mono text-[#F9F618] text-xs uppercase tracking-[0.2em]"}>Get started free</p>
           <h2
             className={
               "mx-auto mb-6 max-w-3xl font-extrabold text-4xl leading-[1.08] tracking-tight md:text-5xl lg:text-6xl"
@@ -573,7 +576,7 @@ function LandingPage() {
           <Button
             asChild
             className={
-              "h-12 gap-2 bg-amber-400 px-8 font-semibold text-base text-zinc-900 shadow-none hover:bg-amber-300"
+              "h-12 gap-2 bg-[#F9F618] px-8 font-semibold text-[#141414] text-base shadow-none hover:bg-[#F9F618]/90"
             }
             size={"lg"}
           >
@@ -624,13 +627,13 @@ function FormatPanel({
   return (
     <div className={"grid items-start gap-10 md:grid-cols-2"}>
       <div>
-        <p className={"mb-4 font-mono text-amber-400 text-xs uppercase tracking-widest"}>{subtitle}</p>
+        <p className={"mb-4 font-mono text-[#F9F618] text-xs uppercase tracking-widest"}>{subtitle}</p>
         <h3 className={"mb-3 font-bold text-2xl"}>{title}</h3>
         <p className={"mb-7 text-zinc-400 leading-relaxed"}>{description}</p>
         <ul className={"space-y-2.5"}>
           {formats.map((format) => (
             <li className={"flex items-center gap-2.5 text-sm text-zinc-300"} key={format}>
-              <CheckCircle2 className={"size-4 shrink-0 text-amber-400"} />
+              <CheckCircle2 className={"size-4 shrink-0 text-[#F9F618]"} />
               {format}
             </li>
           ))}
