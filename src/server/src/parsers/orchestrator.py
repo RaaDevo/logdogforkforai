@@ -28,6 +28,7 @@ from parsers.normalization import sanitize_db_value
 from parsers.preprocessor import FileInput, LogPreprocessorService
 from parsers.profiles import get_profile
 from parsers.registry import ParserRegistry
+from parsers.adaptation_policy import RouteStats, adjusted_priority, should_promote
 
 logger = logging.getLogger(__name__)
 
@@ -342,10 +343,12 @@ def _parse_and_merge(file_inputs: list[FileInput], classification: Classificatio
         "per_column_null_ratios": {},
         "per_table_null_ratios": {},
         "validation_warnings": [],
+        "adaptation": {"route_outcomes": [], "priority_scores": {}, "promotions": []},
     }
     structured_quality_gate_parsers = {"csv", "json_lines", "xml", "binary_hex", "sectioned_kv", "timestamped_event"}
 
-    for parser_key, parser_inputs in grouped_inputs.items():
+    ordered_groups = sorted(grouped_inputs.items(), key=lambda item: item[0])
+    for parser_key, parser_inputs in ordered_groups:
         try:
             pipeline = ParserRegistry.route(parser_key)
         except KeyError as error:
@@ -355,9 +358,11 @@ def _parse_and_merge(file_inputs: list[FileInput], classification: Classificatio
         grouped_classification = classification.model_copy(update={"selected_parser_key": parser_key})
         try:
             grouped_result = pipeline.ingest(parser_inputs, grouped_classification)
+            parser_stats = RouteStats(success=0, failure=0)
 
             quality_gate_failed = bool(getattr(grouped_result, "diagnostics", {}).get("quality_gate_failed"))
             if parser_key in structured_quality_gate_parsers and quality_gate_failed:
+                parser_stats.failure += 1
                 merged_warnings.append(
                     f"Parser '{parser_key}' failed quality gate; falling back to controlled unified repair path."
                 )
@@ -383,6 +388,14 @@ def _parse_and_merge(file_inputs: list[FileInput], classification: Classificatio
                     "deterministic_validation_warnings": grouped_result.diagnostics.get("validation_warnings", []),
                 }
                 grouped_result = fallback_result
+            else:
+                parser_stats.success += 1
+
+            base_conf = float(grouped_result.confidence)
+            priority = adjusted_priority(base_confidence=base_conf, stats=parser_stats)
+            merged_diagnostics["adaptation"]["priority_scores"][parser_key] = round(priority, 3)
+            if should_promote(candidate=parser_stats, incumbent=RouteStats(success=1, failure=1)):
+                merged_diagnostics["adaptation"]["promotions"].append(parser_key)
 
             merged_table_definitions.extend(grouped_result.table_definitions)
             merged_records.update(grouped_result.records)
@@ -421,6 +434,18 @@ def _parse_and_merge(file_inputs: list[FileInput], classification: Classificatio
             validation_warnings = grouped_result.diagnostics.get("validation_warnings")
             if isinstance(validation_warnings, list):
                 merged_diagnostics["validation_warnings"].extend(validation_warnings)
+
+            null_ratio_reason = None
+            if quality_gate_failed:
+                null_ratio_reason = "quality_gate_failed"
+            merged_diagnostics["adaptation"]["route_outcomes"].append(
+                {
+                    "parser_key": parser_key,
+                    "accepted_parse": not quality_gate_failed,
+                    "fallback_triggered": quality_gate_failed,
+                    "null_ratio_failure_reason": null_ratio_reason,
+                }
+            )
         except Exception as error:  # noqa: BLE001
             logger.exception("Parser '%s' failed", parser_key)
             merged_warnings.append(f"Parser '{parser_key}' failed: {error}")
@@ -609,8 +634,10 @@ def _record_feedback(
     profile_name: str | None = None,
 ) -> None:
     from parsers.parser_profiles import ParserProfileStore
+    from parsers.schema_cache import SchemaCache
 
     profile_store = ParserProfileStore()
+    schema_cache = SchemaCache()
     profile = get_profile(profile_name)
     success = bool(result.table_definitions and not result.errors)
 
@@ -640,6 +667,27 @@ def _record_feedback(
             detected_format=file_classification.detected_format,
             success=success,
         )
+        route_parser_key = _parser_key_for_file(file_classification.detected_format)
+        profile_store.record_route_outcome(
+            detected_format=file_classification.detected_format,
+            parser_key=route_parser_key,
+            profile_name=profile_name,
+            success=success,
+        )
+        cache_entry = schema_cache.get_by_fingerprint(
+            fingerprint=fingerprint,
+            domain=profile.domain,
+            profile_name=profile_name,
+            min_confidence=0.0,
+        )
+        if cache_entry is not None:
+            schema_cache.record_route_outcome(
+                cache_entry.schema_key,
+                detected_format=file_classification.detected_format,
+                parser_key=route_parser_key,
+                profile_name=profile_name,
+                success=success,
+            )
 
 
 def get_pipeline_stats() -> dict[str, Any]:

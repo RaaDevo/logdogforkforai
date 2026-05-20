@@ -23,6 +23,7 @@ class LearnedProfile:
     usage_count: int
     success_count: int
     failure_count: int
+    route_stats: dict[str, dict[str, int]]
 
 
 class ParserProfileStore:
@@ -125,6 +126,40 @@ class ParserProfileStore:
         finally:
             db.close()
 
+    def record_route_outcome(
+        self,
+        *,
+        detected_format: str,
+        parser_key: str,
+        profile_name: str | None,
+        success: bool,
+    ) -> None:
+        """Persist per-route counters keyed by (format, parser_key, profile_name)."""
+        route_key = self._route_key(detected_format, parser_key, profile_name)
+        db = SessionLocal()
+        try:
+            query = db.query(ParserProfile).filter(
+                ParserProfile.detected_format == detected_format,
+                ParserProfile.parser_key == parser_key,
+            )
+            if profile_name is not None:
+                query = query.filter(ParserProfile.profile_name == profile_name)
+            rows = query.all()
+            for row in rows:
+                schema = dict(row.schema or {})
+                route_stats = schema.get("route_stats", {})
+                route_bucket = route_stats.get(route_key, {"success": 0, "failure": 0})
+                if success:
+                    route_bucket["success"] = int(route_bucket.get("success", 0)) + 1
+                else:
+                    route_bucket["failure"] = int(route_bucket.get("failure", 0)) + 1
+                route_stats[route_key] = route_bucket
+                schema["route_stats"] = route_stats
+                row.schema = schema
+            db.commit()
+        finally:
+            db.close()
+
     def mark_llm_bypass(self) -> None:
         self._metrics["llm_bypasses"] += 1
 
@@ -149,6 +184,7 @@ class ParserProfileStore:
 
     @staticmethod
     def _to_learned(row: ParserProfile) -> LearnedProfile:
+        schema = dict(row.schema or {})
         return LearnedProfile(
             fingerprint=row.fingerprint,
             domain=row.domain,
@@ -157,10 +193,15 @@ class ParserProfileStore:
             structural_class=row.structural_class,
             parser_key=row.parser_key,
             extraction_strategy=row.extraction_strategy,
-            schema=dict(row.schema or {}),
+            schema=schema,
             confidence=float(row.confidence or 0.0),
             health_score=float(row.health_score or 0.5),
             usage_count=int(row.usage_count or 0),
             success_count=int(row.success_count or 0),
             failure_count=int(row.failure_count or 0),
+            route_stats=schema.get("route_stats", {}),
         )
+
+    @staticmethod
+    def _route_key(detected_format: str, parser_key: str, profile_name: str | None) -> str:
+        return f"{detected_format}|{parser_key}|{profile_name or 'default'}"
