@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from parsers.contracts import INGESTION_SCHEMA_VERSION, ClassificationResult, FileClassification, StructuralClass
 from parsers.few_shot_store import FewShotStore
 from parsers.profiles import LogProfileDefinition, get_profile
+from parsers.parser_profiles import LearnedProfile, ParserProfileStore
 from parsers.schema_cache import SchemaCache
 
 logger = logging.getLogger(__name__)
@@ -167,6 +168,7 @@ class LogPreprocessorService:
         self.profile: LogProfileDefinition = get_profile(self.profile_name)
         self.schema_cache = schema_cache or SchemaCache()
         self.few_shot_store = few_shot_store or FewShotStore()
+        self.parser_profile_store = ParserProfileStore()
 
     def classify(self, files: list[FileInput]) -> ClassificationResult:
         warnings: list[str] = []
@@ -197,6 +199,39 @@ class LogPreprocessorService:
 
             sample = [line for line in lines[:50] if line.strip()]
             fingerprint = self._fingerprint(sample)
+            learned = self.parser_profile_store.lookup(
+                fingerprint=fingerprint,
+                domain=self.profile.domain,
+                profile_name=self.profile_name,
+                min_confidence=self.profile.cache_confidence_threshold,
+            )
+            if learned is not None:
+                self.parser_profile_store.mark_llm_bypass()
+                observations.append(
+                    FileObservation(
+                        filename=file_input.filename,
+                        line_count=len(lines),
+                        detected_format=DetectedFormat(learned.detected_format) if learned.detected_format in {item.value for item in DetectedFormat} else DetectedFormat.UNKNOWN,
+                        format_confidence=round(min(learned.confidence, 1.0), 2),
+                        segmentation_hint=SegmentationStrategy.PER_LINE,
+                        sample_size=min(len(lines), MAX_SAMPLE_LINES),
+                        warnings=[],
+                    )
+                )
+                file_classifications.append(
+                    FileClassification(
+                        file_id=file_input.file_id,
+                        filename=file_input.filename,
+                        detected_format=learned.detected_format,
+                        structural_class=self._normalize_structural_class(learned.structural_class),
+                        format_confidence=round(min(learned.confidence, 1.0), 2),
+                        line_count=len(lines),
+                        warnings=[],
+                    )
+                )
+                diagnostics["files"].append({"filename": file_input.filename, "source": "learned_profile", "fingerprint": fingerprint})
+                continue
+
             cached = self.schema_cache.get_by_fingerprint(
                 fingerprint=fingerprint,
                 domain=self.profile.domain,
@@ -431,6 +466,26 @@ class LogPreprocessorService:
                     }
                 )
 
+            should_persist_profile = self._validate_learned_profile(lines, llm_result.response if llm_result.success else None)
+            if llm_result.success and llm_result.response and should_persist_profile:
+                self.parser_profile_store.upsert_validated(
+                    LearnedProfile(
+                        fingerprint=fingerprint,
+                        domain=self.profile.domain,
+                        profile_name=self.profile_name,
+                        detected_format=llm_result.response.format_name,
+                        structural_class=self._llm_category_to_structural_class(llm_result.response.format_category).value,
+                        parser_key=self._select_parser_key(self._llm_category_to_structural_class(llm_result.response.format_category), llm_result.response.format_name),
+                        extraction_strategy="per_line",
+                        schema={"reasoning": llm_result.response.reasoning},
+                        confidence=llm_result.response.confidence,
+                        health_score=1.0,
+                        usage_count=1,
+                        success_count=1,
+                        failure_count=0,
+                    )
+                )
+
         dominant_format = self._dominant_format_from_classifications(file_classifications)
         structural_class_overall = self._dominant_structural_class(file_classifications)
         selected_parser_key = self._select_parser_key(structural_class_overall, dominant_format)
@@ -446,6 +501,20 @@ class LogPreprocessorService:
             confidence=confidence,
             diagnostics=diagnostics,
         )
+
+    def _validate_learned_profile(self, lines: list[str], response: Any) -> bool:
+        if not response:
+            return False
+        if response.confidence < self.profile.cache_confidence_threshold:
+            return False
+        strategy = getattr(response, "extraction_strategy", None)
+        if strategy is None:
+            return False
+        parsed_lines = [line for line in lines[:100] if line.strip()]
+        if not parsed_lines:
+            return False
+        extraction_success = min(1.0, len(parsed_lines) / 20.0)
+        return extraction_success >= 0.6
 
     @staticmethod
     def _llm_category_to_structural_class(category: Any) -> StructuralClass:
