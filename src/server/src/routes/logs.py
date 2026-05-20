@@ -83,6 +83,9 @@ class LogProcessResponse(BaseModel):
     status: str
     classification: dict[str, Any] | None
     result: dict[str, Any] | None
+    overall_confidence: float | None = None
+    per_file_confidence: dict[str, float | None] | None = None
+    per_table_confidence: dict[str, float | None] | None = None
     error: str | None
     created_at: datetime
     updated_at: datetime
@@ -341,13 +344,32 @@ def _log_file_response(log_file: LogFile, asset: Asset):
 
 
 def _log_process_response(process: LogProcess):
+    classification = _parse_json(process.classification)
+    result = _parse_json(process.result)
+    warnings: list[str] = []
+    if isinstance(result, dict):
+        warnings = [str(item) for item in result.get("warnings", []) if isinstance(result.get("warnings"), list)]
+        if "overall_confidence" not in result:
+            warnings.append("Overall parse confidence unavailable; returning null.")
+            result["overall_confidence"] = None
+        if "per_file_confidence" not in result:
+            warnings.append("Per-file parse confidence unavailable; returning null.")
+            result["per_file_confidence"] = None
+        if "per_table_confidence" not in result:
+            warnings.append("Per-table parse confidence unavailable; returning null.")
+            result["per_table_confidence"] = None
+        result["warnings"] = warnings
+
     return LogProcessResponse(
         id=str(process.id),
         group_id=str(process.group_id),
         file_id=str(process.file_id) if process.file_id is not None else None,
         status=process.status,
-        classification=_parse_json(process.classification),
-        result=_parse_json(process.result),
+        classification=classification,
+        result=result,
+        overall_confidence=result.get("overall_confidence") if isinstance(result, dict) else None,
+        per_file_confidence=result.get("per_file_confidence") if isinstance(result, dict) else None,
+        per_table_confidence=result.get("per_table_confidence") if isinstance(result, dict) else None,
         error=process.error,
         created_at=process.created_at,
         updated_at=process.updated_at,
@@ -1204,10 +1226,24 @@ MAX_REPORT_ROWS = 200
 
 def _fetch_group_rows_for_report(group_id: str, database: Session) -> str:
     tables = database.query(LogTable).filter(LogTable.group_id == _uuid_or_raw(group_id)).all()
+    latest_process = (
+        database.query(LogProcess)
+        .filter(LogProcess.group_id == _uuid_or_raw(group_id), LogProcess.status == "completed")
+        .order_by(LogProcess.updated_at.desc())
+        .first()
+    )
     if not tables:
         return "No parsed tables are available for this log group."
 
     lines: list[str] = ["Log data context:", ""]
+    if latest_process and latest_process.result:
+        parsed_result = _parse_json(latest_process.result)
+        if isinstance(parsed_result, dict):
+            lines.append("Parse confidence context:")
+            lines.append(f"overall_confidence={parsed_result.get('overall_confidence')}")
+            lines.append(f"per_file_confidence={json.dumps(parsed_result.get('per_file_confidence'), default=str)}")
+            lines.append(f"per_table_confidence={json.dumps(parsed_result.get('per_table_confidence'), default=str)}")
+            lines.append("")
     megabase_database = MegabaseSessionLocal()
     try:
         init_megabase(megabase_database)

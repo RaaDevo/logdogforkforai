@@ -38,6 +38,9 @@ type ProcessInsights = {
   parserKey: string | null;
   classificationConfidence: number | null;
   resultConfidence: number | null;
+  overallConfidence: number | null;
+  perFileConfidence: Record<string, number | null> | null;
+  perTableConfidence: Record<string, number | null> | null;
   totalRowCount: number;
   tableCount: number;
   fileCount: number;
@@ -228,6 +231,12 @@ function ProcessRow({
           <span>{insights.totalRowCount.toLocaleString()} row(s) persisted</span>
           <span>·</span>
           <span>{insights.fileCount} file(s) analyzed</span>
+          {insights.overallConfidence !== null && (
+            <>
+              <span>·</span>
+              <span>{Math.round(insights.overallConfidence * 100)}% overall confidence</span>
+            </>
+          )}
           {insights.resultConfidence !== null && (
             <>
               <span>·</span>
@@ -330,6 +339,7 @@ function ProcessDetailsDialog({ process, onClose }: { process: LogProcess; onClo
                         const lineCount = asNumber(fileClassification.line_count, 0);
                         const formatConfidence = asFiniteNumber(fileClassification.format_confidence);
                         const key = getFileClassificationKey(fileClassification);
+                        const parseConfidence = insights.perFileConfidence?.[asNullableString(fileClassification.file_id) ?? filename];
 
                         return (
                           <div className={"flex items-center gap-3 px-3 py-2"} key={key}>
@@ -342,6 +352,11 @@ function ProcessDetailsDialog({ process, onClose }: { process: LogProcess; onClo
                               <span className={"shrink-0 text-muted-foreground text-xs"}>
                                 {Math.round(formatConfidence * 100)}%
                               </span>
+                            )}
+                            {typeof parseConfidence === "number" && Number.isFinite(parseConfidence) && (
+                              <Badge className={"text-xs"} variant={"outline"}>
+                                parse {Math.round(parseConfidence * 100)}%
+                              </Badge>
                             )}
                           </div>
                         );
@@ -361,6 +376,9 @@ function ProcessDetailsDialog({ process, onClose }: { process: LogProcess; onClo
                     {insights.parserKey !== null && <Badge variant={"outline"}>parser: {insights.parserKey}</Badge>}
                     <Badge variant={"secondary"}>{insights.tableCount} table(s)</Badge>
                     <Badge variant={"secondary"}>{insights.totalRowCount.toLocaleString()} row(s)</Badge>
+                    {insights.overallConfidence !== null && (
+                      <Badge variant={"outline"}>overall: {Math.round(insights.overallConfidence * 100)}%</Badge>
+                    )}
                   </div>
 
                   {insights.resultConfidence !== null && (
@@ -384,6 +402,11 @@ function ProcessDetailsDialog({ process, onClose }: { process: LogProcess; onClo
                           <Badge className={"text-xs"} variant={"secondary"}>
                             {tableSummary.rowCount.toLocaleString()} row(s)
                           </Badge>
+                          {typeof insights.perTableConfidence?.[tableSummary.name] === "number" && (
+                            <Badge className={"text-xs"} variant={"outline"}>
+                              conf {Math.round((insights.perTableConfidence?.[tableSummary.name] ?? 0) * 100)}%
+                            </Badge>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -510,6 +533,9 @@ function getProcessInsights(process: LogProcess): ProcessInsights {
     parserKey: asNullableString(result?.parser_key),
     classificationConfidence: asFiniteNumber(classification?.confidence),
     resultConfidence: asFiniteNumber(result?.confidence),
+    overallConfidence: asFiniteNumber(result?.overall_confidence),
+    perFileConfidence: asRecord(result?.per_file_confidence) as Record<string, number | null> | null,
+    perTableConfidence: asRecord(result?.per_table_confidence) as Record<string, number | null> | null,
     totalRowCount,
     tableCount: tableDefinitions.length,
     fileCount: fileClassifications.length,

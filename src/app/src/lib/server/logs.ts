@@ -27,6 +27,9 @@ export type LogProcess = {
   status: LogProcessStatus;
   classification: LogProcessClassification | Record<string, unknown> | null;
   result: LogProcessResult | Record<string, unknown> | null;
+  overall_confidence?: number | null;
+  per_file_confidence?: Record<string, number | null> | null;
+  per_table_confidence?: Record<string, number | null> | null;
   error: string | null;
   created_at: string;
   updated_at: string;
@@ -49,6 +52,9 @@ export type LogProcessResult = {
   parser_key?: string;
   warnings?: string[];
   confidence?: number;
+  overall_confidence?: number | null;
+  per_file_confidence?: Record<string, number | null> | null;
+  per_table_confidence?: Record<string, number | null> | null;
 };
 
 export type UploadFilesResponse = {
