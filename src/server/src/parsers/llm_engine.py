@@ -6,6 +6,7 @@ from typing import Any, TypeVar
 from pydantic import BaseModel
 
 from lib.ai import get_generative_model, DEFAULT_MODEL, DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS
+from lib.ai_prompting import build_hardened_system_prompt, wrap_untrusted_content
 from parsers.few_shot_store import FewShotStore
 from parsers.llm_contracts import (
     LlmInvocationResult,
@@ -72,13 +73,16 @@ class LlmEngine:
         max_tokens: int | None = None,
         profile_context: dict[str, Any] | None = None,
     ) -> LlmInvocationResult:
-        system_prompt = (
-            "You are an expert log format analyst. Analyze the provided log samples and detect the format, "
-            "structural category, and recommended extraction strategy. Be precise and conservative with confidence scores."
+        system_prompt = build_hardened_system_prompt(
+            "You are an expert log format analyst. Analyze the provided log samples and detect the format, structural category, and recommended extraction strategy.",
+            "Be precise and conservative with confidence scores.",
         )
 
         sample_text = "\n".join(line[:2000] for line in sample_lines[:50])
-        prompt = f"Analyze these log lines and detect the format:\n\n```\n{sample_text}\n```"
+        prompt = (
+            "Analyze these log lines and detect the format:\n\n"
+            f"{wrap_untrusted_content(sample_text, label='Log lines')}"
+        )
 
         merged_profile_context = dict(self.profile_definition)
         if profile_context:
@@ -122,16 +126,15 @@ class LlmEngine:
         max_tokens: int | None = None,
         profile_context: dict[str, Any] | None = None,
     ) -> LlmInvocationResult:
-        system_prompt = (
-            "You are an expert log schema inference engine. Given sample log lines, infer a database schema "
-            "that captures the meaningful fields while minimizing null rates. Only include columns that appear "
-            "in at least 50% of records. Use descriptive column names in snake_case."
+        system_prompt = build_hardened_system_prompt(
+            "You are an expert log schema inference engine. Given sample log lines, infer a database schema that captures meaningful fields while minimizing null rates.",
+            "Only include columns that appear in at least 50% of records. Use descriptive column names in snake_case.",
         )
 
         sample_text = "\n".join(line[:2000] for line in sample_lines[:50])
         prompt = (
             f"Detected format: {detected_format}\n\n"
-            f"Infer a schema from these log lines:\n\n```\n{sample_text}\n```\n\n"
+            f"Infer a schema from these log lines:\n\n{wrap_untrusted_content(sample_text, label='Log lines')}\n\n"
             "Return column definitions with appropriate SQL types and descriptions."
         )
 
@@ -166,9 +169,9 @@ class LlmEngine:
         column_descriptions: dict[str, str] | None = None,
         max_tokens: int | None = None,
     ) -> LlmInvocationResult:
-        system_prompt = (
-            "You are a log field extraction engine. Extract the specified fields from a single log line. "
-            "Return null for fields that cannot be found. Do not fabricate values."
+        system_prompt = build_hardened_system_prompt(
+            "You are a log field extraction engine. Extract the specified fields from a single log line.",
+            "Return null for fields that cannot be found. Do not fabricate values.",
         )
 
         columns_desc = ", ".join(column_names)
@@ -176,13 +179,13 @@ class LlmEngine:
             columns_detail = "\n".join(f"- {name}: {column_descriptions.get(name, '')}" for name in column_names)
             prompt = (
                 f"Extract these fields from the log line:\n\n{columns_detail}\n\n"
-                f"Log line:\n```\n{line[:3000]}\n```\n\n"
+                f"Log line:\n{wrap_untrusted_content(line[:3000], label='Log line')}\n\n"
                 "Return extracted fields as key-value pairs."
             )
         else:
             prompt = (
                 f"Extract these fields from the log line: {columns_desc}\n\n"
-                f"Log line:\n```\n{line[:3000]}\n```\n\n"
+                f"Log line:\n{wrap_untrusted_content(line[:3000], label='Log line')}\n\n"
                 "Return extracted fields as key-value pairs."
             )
 
@@ -200,10 +203,9 @@ class LlmEngine:
         column_descriptions: dict[str, str] | None = None,
         max_tokens: int | None = None,
     ) -> LlmInvocationResult:
-        system_prompt = (
-            "You are a batch log extraction engine. Extract the specified fields from multiple log lines. "
-            "Return null for fields that cannot be found. Do not fabricate values. "
-            "Return one record per line."
+        system_prompt = build_hardened_system_prompt(
+            "You are a batch log extraction engine. Extract the specified fields from multiple log lines.",
+            "Return null for fields that cannot be found. Do not fabricate values. Return one record per line.",
         )
 
         sample_text = "\n".join(f"Line {i + 1}: {line[:1000]}" for i, line in enumerate(lines[:20]))
@@ -212,13 +214,13 @@ class LlmEngine:
             columns_detail = "\n".join(f"- {name}: {column_descriptions.get(name, '')}" for name in column_names)
             prompt = (
                 f"Extract these fields from each log line:\n\n{columns_detail}\n\n"
-                f"Log lines:\n\n{sample_text}\n\n"
+                f"Log lines:\n\n{wrap_untrusted_content(sample_text, label='Log lines')}\n\n"
                 "Return extracted records as a list of objects, one per line."
             )
         else:
             prompt = (
                 f"Extract these fields from each log line: {columns_desc}\n\n"
-                f"Log lines:\n\n{sample_text}\n\n"
+                f"Log lines:\n\n{wrap_untrusted_content(sample_text, label='Log lines')}\n\n"
                 "Return extracted records as a list of objects, one per line."
             )
 
@@ -236,10 +238,9 @@ class LlmEngine:
         null_rates: dict[str, float],
         max_tokens: int | None = None,
     ) -> LlmInvocationResult:
-        system_prompt = (
-            "You are a schema refinement engine. Given a current schema and null rates for each column, "
-            "refine the schema to reduce null rates. Consider merging sparse columns, splitting overloaded columns, "
-            "or renaming columns for better clarity."
+        system_prompt = build_hardened_system_prompt(
+            "You are a schema refinement engine. Given a current schema and null rates for each column, refine the schema to reduce null rates.",
+            "Consider merging sparse columns, splitting overloaded columns, or renaming columns for better clarity.",
         )
 
         high_null = {k: v for k, v in null_rates.items() if v > 0.5}
@@ -254,7 +255,7 @@ class LlmEngine:
         prompt = (
             f"Current schema:\n{current_schema}\n\n"
             f"High null rate columns:\n{null_report}\n\n"
-            f"Sample log lines:\n\n```\n{sample_text}\n```\n\n"
+            f"Sample log lines:\n\n{wrap_untrusted_content(sample_text, label='Sample log lines')}\n\n"
             "Refine the schema to reduce null rates while preserving semantic meaning."
         )
 

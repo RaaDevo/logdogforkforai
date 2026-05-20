@@ -7,6 +7,7 @@ from typing import Any, Generic, TypeVar
 from pydantic import BaseModel, Field
 
 from lib.ai import get_generative_model, DEFAULT_MODEL, DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS
+from lib.ai_prompting import build_hardened_system_prompt, wrap_untrusted_content
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -92,9 +93,9 @@ def infer_structured_schema(
     model: str | None = None,
     api_key: str | None = None,
 ) -> LlmInvocation[LlmStructuredSchemaResponse]:
-    system_prompt = (
-        "You are an expert log schema inference assistant. "
-        "Infer table columns that reduce nulls while preserving semantic meaning."
+    system_prompt = build_hardened_system_prompt(
+        "You are an expert log schema inference assistant.",
+        "Infer table columns that reduce nulls while preserving semantic meaning.",
     )
     prompt = (
         f"Detected format: {detected_format}\n"
@@ -102,7 +103,7 @@ def infer_structured_schema(
         "Existing heuristic columns:\n"
         f"{heuristic_summary}\n\n"
         "Sample logs:\n"
-        f"{sample_text}\n\n"
+        f"{wrap_untrusted_content(sample_text, label='Sample logs')}\n\n"
         "Return a concise summary and additional columns only if they are stable across records."
     )
     return _invoke_structured(
@@ -120,15 +121,15 @@ def infer_unstructured_fields(
     model: str | None = None,
     api_key: str | None = None,
 ) -> LlmInvocation[LlmUnstructuredResponse]:
-    system_prompt = (
-        "You are an expert unstructured log analyst. "
-        "Extract robust field candidates that can become table columns with minimal null rates."
+    system_prompt = build_hardened_system_prompt(
+        "You are an expert unstructured log analyst.",
+        "Extract robust field candidates that can become table columns with minimal null rates.",
     )
     prompt = (
         "Current heuristic fields:\n"
         f"{heuristic_summary}\n\n"
         "Sample unstructured logs:\n"
-        f"{sample_text}\n\n"
+        f"{wrap_untrusted_content(sample_text, label='Sample unstructured logs')}\n\n"
         "Only suggest stable fields and include clear descriptions."
     )
     return _invoke_structured(
@@ -147,15 +148,15 @@ def extract_semi_structured_fields(
     model: str | None = None,
     api_key: str | None = None,
 ) -> LlmInvocation[LlmSemiStructuredResponse]:
-    system_prompt = (
-        "You extract structured fields from semi-structured logs. "
-        "Return normalized key-value fields and section counts."
+    system_prompt = build_hardened_system_prompt(
+        "You extract structured fields from semi-structured logs.",
+        "Return normalized key-value fields and section counts.",
     )
     prompt = (
         f"Thinking level: {thinking_level}\n"
         f"Context: {context_json or '{}'}\n"
         "Input log:\n"
-        f"{raw_text}\n\n"
+        f"{wrap_untrusted_content(raw_text, label='Input log')}\n\n"
         "Return stable fields and a detected format type."
     )
     invocation = _invoke_structured(
