@@ -332,6 +332,8 @@ def _parse_and_merge(file_inputs: list[FileInput], classification: Classificatio
     merged_records: dict[str, list[dict[str, Any]]] = {}
     merged_warnings: list[str] = []
     confidence_values: list[float] = []
+    table_confidence_values: dict[str, list[float]] = {}
+    per_file_confidence: dict[str, float | None] = {}
     used_parser_keys: list[str] = []
     merged_diagnostics: dict[str, Any] = {
         "parsers": {},
@@ -387,6 +389,24 @@ def _parse_and_merge(file_inputs: list[FileInput], classification: Classificatio
             merged_warnings.extend(grouped_result.warnings)
             confidence_values.append(grouped_result.confidence)
             used_parser_keys.append(grouped_result.parser_key)
+            quality_penalty = 0.0
+            if bool(getattr(grouped_result, "diagnostics", {}).get("quality_gate_failed")):
+                quality_penalty = 0.2
+
+            parser_confidence = max(min(grouped_result.confidence - quality_penalty, 1.0), 0.0)
+            parser_file_count = max(len(parser_inputs), 1)
+            for parser_input in parser_inputs:
+                file_key = parser_input.file_id or parser_input.filename
+                file_classification = file_classifications.get((parser_input.file_id, parser_input.filename))
+                classification_confidence = (
+                    file_classification.format_confidence if file_classification is not None else classification.confidence
+                )
+                per_file_confidence[file_key] = round((classification_confidence + parser_confidence) / 2, 2)
+
+            for table_definition in grouped_result.table_definitions:
+                table_confidence_values.setdefault(table_definition.table_name, []).append(
+                    round(parser_confidence / parser_file_count, 4) * parser_file_count
+                )
 
             merged_diagnostics["parsers"][parser_key] = grouped_result.diagnostics or {}
             table_row_counts = grouped_result.diagnostics.get("table_row_counts")
@@ -406,6 +426,18 @@ def _parse_and_merge(file_inputs: list[FileInput], classification: Classificatio
             merged_warnings.append(f"Parser '{parser_key}' failed: {error}")
 
     final_confidence = round(sum(confidence_values) / len(confidence_values), 2) if confidence_values else 0.0
+    quality_penalty_total = sum(
+        0.2
+        for parser_diagnostics in merged_diagnostics["parsers"].values()
+        if isinstance(parser_diagnostics, dict) and parser_diagnostics.get("quality_gate_failed")
+    )
+    overall_confidence = round(max(min((classification.confidence + final_confidence) / 2 - quality_penalty_total, 1.0), 0.0), 2)
+    per_table_confidence = {
+        table_name: round(sum(values) / len(values), 2) if values else None
+        for table_name, values in table_confidence_values.items()
+    }
+    if not per_file_confidence:
+        merged_warnings.append("Per-file confidence unavailable; emitted null confidence values.")
     final_parser_key = "mixed"
     if len(set(used_parser_keys)) == 1 and used_parser_keys:
         final_parser_key = used_parser_keys[0]
@@ -418,6 +450,9 @@ def _parse_and_merge(file_inputs: list[FileInput], classification: Classificatio
         parser_key=final_parser_key,
         warnings=merged_warnings,
         confidence=final_confidence,
+        overall_confidence=overall_confidence,
+        per_file_confidence=per_file_confidence,
+        per_table_confidence=per_table_confidence,
         diagnostics=merged_diagnostics,
     )
 

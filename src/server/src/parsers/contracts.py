@@ -38,6 +38,9 @@ class ParserPipelineResult(BaseModel):
     parser_key: str
     warnings: list[str] = Field(default_factory=list)
     confidence: float = Field(ge=0.0, le=1.0, default=1.0)
+    overall_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    per_file_confidence: dict[str, float | None] = Field(default_factory=dict)
+    per_table_confidence: dict[str, float | None] = Field(default_factory=dict)
     diagnostics: dict[str, Any] = Field(default_factory=dict)
 
     @property
