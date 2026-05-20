@@ -130,13 +130,28 @@ class ChatRequest(BaseModel):
 
 
 class LogInsightReport(BaseModel):
+    class Citation(BaseModel):
+        id: str
+        section: str
+        source_table: str
+        source_file: str | None = None
+        row_range: str
+        evidence: str
+
     summary: str
+    summary_citation_ids: list[str] = Field(default_factory=list)
     severity: str
     top_errors: list[str] = Field(default_factory=list)
+    top_errors_citation_ids: list[str] = Field(default_factory=list)
     root_cause_hypothesis: str
+    root_cause_hypothesis_citation_ids: list[str] = Field(default_factory=list)
     log_sequence_narrative: str
+    log_sequence_narrative_citation_ids: list[str] = Field(default_factory=list)
     recommendations: list[str] = Field(default_factory=list)
+    recommendations_citation_ids: list[str] = Field(default_factory=list)
     anomalies: list[str] = Field(default_factory=list)
+    anomalies_citation_ids: list[str] = Field(default_factory=list)
+    citations: list[Citation] = Field(default_factory=list)
 
 
 class QueryRequest(BaseModel):
@@ -1255,9 +1270,15 @@ def _fetch_group_rows_for_report(group_id: str, database: Session) -> str:
                 rows = result.fetchall()
                 lines.append(f"Columns: {', '.join(columns)}")
                 lines.append(f"Row count in sample: {len(rows)}")
-                for row in rows[:10]:
+                for row_index, row in enumerate(rows[:10]):
                     row_dict = dict(zip(columns, row))
-                    lines.append(json.dumps(row_dict, ensure_ascii=True, default=str))
+                    provenance_row = {
+                        "_source_table": table.table,
+                        "_row_index": row_index,
+                        "_source_file": row_dict.get("source_file"),
+                        "row": row_dict,
+                    }
+                    lines.append(json.dumps(provenance_row, ensure_ascii=True, default=str))
                 lines.append("")
             except Exception as error:
                 lines.append(f"Could not read table: {error}")
@@ -1266,6 +1287,30 @@ def _fetch_group_rows_for_report(group_id: str, database: Session) -> str:
         megabase_database.close()
 
     return "\n".join(lines)
+
+
+def _validate_report_citations(report: LogInsightReport) -> None:
+    citation_ids = {citation.id for citation in report.citations}
+    if len(citation_ids) != len(report.citations):
+        raise HTTPException(status_code=500, detail="Insight report citation IDs must be unique.")
+
+    section_map = {
+        "summary": report.summary_citation_ids,
+        "top_errors": report.top_errors_citation_ids,
+        "root_cause_hypothesis": report.root_cause_hypothesis_citation_ids,
+        "log_sequence_narrative": report.log_sequence_narrative_citation_ids,
+        "recommendations": report.recommendations_citation_ids,
+        "anomalies": report.anomalies_citation_ids,
+    }
+    for section_name, ids in section_map.items():
+        if not ids:
+            raise HTTPException(status_code=500, detail=f"Insight report section '{section_name}' is missing citations.")
+        unknown_ids = [citation_id for citation_id in ids if citation_id not in citation_ids]
+        if unknown_ids:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Insight report section '{section_name}' contains unknown citation IDs: {unknown_ids}",
+            )
 
 
 @router.post("/{group_id}/insights", response_model=LogInsightReport)
@@ -1286,16 +1331,25 @@ def generate_insights(
         f"{context}\n\n"
         "Generate a JSON report with these fields:\n"
         '- "summary": a 1-2 sentence overview\n'
+        '- "summary_citation_ids": list of citation IDs used by summary\n'
         '- "severity": one of low, medium, high, critical\n'
         '- "top_errors": list of top error strings found\n'
+        '- "top_errors_citation_ids": list of citation IDs used by top_errors\n'
         '- "root_cause_hypothesis": a brief hypothesis\n'
+        '- "root_cause_hypothesis_citation_ids": list of citation IDs used by root_cause_hypothesis\n'
         '- "log_sequence_narrative": a short narrative of what happened\n'
+        '- "log_sequence_narrative_citation_ids": list of citation IDs used by log_sequence_narrative\n'
         '- "recommendations": list of actionable recommendations\n'
+        '- "recommendations_citation_ids": list of citation IDs used by recommendations\n'
         '- "anomalies": list of anomalies detected\n'
+        '- "anomalies_citation_ids": list of citation IDs used by anomalies\n'
+        '- "citations": list of citation objects with id, section, source_table, source_file, row_range, evidence\n'
+        "Require citations for every major section and ensure each citation ID maps to a citation object.\n"
     )
 
     model = get_generative_model()
     report = model.generate_structured(prompt, LogInsightReport, system_prompt=system_prompt)
+    _validate_report_citations(report)
 
     log_report = LogReport(
         group_id=group.id,

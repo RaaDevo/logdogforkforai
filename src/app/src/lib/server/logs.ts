@@ -106,13 +106,27 @@ export type DashboardStats = {
 };
 
 export type LogInsightReport = {
+  citations: Array<{
+    id: string;
+    section: string;
+    source_table: string;
+    source_file: string | null;
+    row_range: string;
+    evidence: string;
+  }>;
   summary: string;
+  summary_citation_ids: string[];
   severity: string;
   top_errors: string[];
+  top_errors_citation_ids: string[];
   root_cause_hypothesis: string;
+  root_cause_hypothesis_citation_ids: string[];
   log_sequence_narrative: string;
+  log_sequence_narrative_citation_ids: string[];
   recommendations: string[];
+  recommendations_citation_ids: string[];
   anomalies: string[];
+  anomalies_citation_ids: string[];
 };
 
 export type ChatMessage = {
