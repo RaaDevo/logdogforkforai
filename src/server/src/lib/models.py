@@ -161,6 +161,9 @@ class LogReport(Base):
     )
     group_id = Column(UUID(as_uuid=True), ForeignKey("groups.id"), nullable=False, index=True)
     content = Column(JSONB, nullable=False, default=dict)
+    validation_status = Column(String, nullable=False, default="passed")
+    unsupported_claims = Column(JSONB, nullable=False, default=list)
+    grounding_score = Column(Float, nullable=False, default=1.0)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     group = relationship("LogGroup", back_populates="reports")

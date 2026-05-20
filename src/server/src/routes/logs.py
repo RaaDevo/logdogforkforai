@@ -151,6 +151,9 @@ class LogInsightReport(BaseModel):
     recommendations: list[str] = Field(default_factory=list)
     recommendations_citation_ids: list[str] = Field(default_factory=list)
     anomalies: list[str] = Field(default_factory=list)
+    validation_status: str | None = None
+    unsupported_claims: list[str] = Field(default_factory=list)
+    grounding_score: float | None = None
     anomalies_citation_ids: list[str] = Field(default_factory=list)
     citations: list[Citation] = Field(default_factory=list)
 
@@ -1238,6 +1241,61 @@ def stream_chat(
 
 
 MAX_REPORT_ROWS = 200
+MAX_INSIGHT_TEXT_LEN = 1500
+MAX_INSIGHT_LIST_ITEMS = 10
+MAX_INSIGHT_LIST_ITEM_LEN = 300
+MAX_UNSUPPORTED_CLAIMS = 2
+
+
+def _validate_report_shape(report: LogInsightReport) -> list[str]:
+    issues: list[str] = []
+    required_text_fields = ("summary", "severity", "root_cause_hypothesis", "log_sequence_narrative")
+    for field_name in required_text_fields:
+        raw = getattr(report, field_name, "")
+        if not isinstance(raw, str) or not raw.strip():
+            issues.append(f"{field_name} must be non-empty.")
+        elif len(raw.strip()) > MAX_INSIGHT_TEXT_LEN:
+            issues.append(f"{field_name} exceeds max length of {MAX_INSIGHT_TEXT_LEN}.")
+    if report.severity not in {"low", "medium", "high", "critical"}:
+        issues.append("severity must be one of low, medium, high, critical.")
+
+    def validate_list_field(field_name: str, values: list[str]) -> None:
+        if len(values) > MAX_INSIGHT_LIST_ITEMS:
+            issues.append(f"{field_name} exceeds max items of {MAX_INSIGHT_LIST_ITEMS}.")
+        for index, value in enumerate(values):
+            text_value = (value or "").strip()
+            if not text_value:
+                issues.append(f"{field_name}[{index}] must be non-empty.")
+            elif len(text_value) > MAX_INSIGHT_LIST_ITEM_LEN:
+                issues.append(f"{field_name}[{index}] exceeds max length of {MAX_INSIGHT_LIST_ITEM_LEN}.")
+
+    validate_list_field("top_errors", report.top_errors)
+    validate_list_field("recommendations", report.recommendations)
+    validate_list_field("anomalies", report.anomalies)
+    return issues
+
+
+def _validate_report_grounding(report: LogInsightReport, context: str) -> list[str]:
+    context_lc = context.lower()
+    candidates: list[str] = []
+    candidates.extend(report.top_errors)
+    candidates.extend(report.anomalies)
+    for sentence in re.split(r"[.!?]\s+", report.root_cause_hypothesis):
+        if sentence.strip():
+            candidates.append(sentence.strip())
+    unsupported: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        normalized = (candidate or "").strip()
+        if len(normalized) < 5:
+            continue
+        normalized_lc = normalized.lower()
+        if normalized_lc in seen:
+            continue
+        seen.add(normalized_lc)
+        if normalized_lc not in context_lc:
+            unsupported.append(normalized)
+    return unsupported
 
 
 def _fetch_group_rows_for_report(group_id: str, database: Session) -> str:
@@ -1350,15 +1408,40 @@ def generate_insights(
 
     model = get_generative_model()
     report = model.generate_structured(prompt, LogInsightReport, system_prompt=system_prompt)
+    shape_issues = _validate_report_shape(report)
+    unsupported_claims = _validate_report_grounding(report, context)
+    grounding_score = 1.0
+    if report.top_errors or report.anomalies:
+        grounding_score = max(0.0, 1.0 - (len(unsupported_claims) / max(1, len(report.top_errors) + len(report.anomalies))))
+    validation_status = "passed"
+    if shape_issues or len(unsupported_claims) > MAX_UNSUPPORTED_CLAIMS:
+        validation_status = "failed"
+
+    if validation_status == "failed":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": "Generated insights failed validation.",
+                "shape_issues": shape_issues,
+                "unsupported_claims": unsupported_claims,
+                "grounding_score": grounding_score,
+            },
+        )
     _validate_report_citations(report)
 
     log_report = LogReport(
         group_id=group.id,
         content=report.model_dump(),
+        validation_status=validation_status,
+        unsupported_claims=unsupported_claims,
+        grounding_score=grounding_score,
     )
     database.add(log_report)
     database.commit()
 
+    report.validation_status = validation_status
+    report.unsupported_claims = unsupported_claims
+    report.grounding_score = grounding_score
     return report
 
 
@@ -1376,7 +1459,11 @@ def get_insights(
     if log_report is None:
         return None
 
-    return LogInsightReport(**log_report.content)
+    report = LogInsightReport(**log_report.content)
+    report.validation_status = log_report.validation_status
+    report.unsupported_claims = log_report.unsupported_claims or []
+    report.grounding_score = log_report.grounding_score
+    return report
 
 
 def _get_group_table_names(database: Session, group_id: str) -> set[str]:
