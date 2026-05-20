@@ -56,6 +56,7 @@ export function ReportTab({ logGroupId }: ReportTabProps) {
   const isLoading = loadingReport;
 
   const severityColor = getSeverityColor(report?.severity ?? "");
+  const citationsById = new Map((report?.citations ?? []).map((citation) => [citation.id, citation]));
 
   if (isLoading) {
     return (
@@ -111,6 +112,7 @@ export function ReportTab({ logGroupId }: ReportTabProps) {
           </CardHeader>
           <CardContent>
             <p className={"text-muted-foreground text-sm"}>{report.summary}</p>
+            <SectionSources citationIds={report.summary_citation_ids} citationsById={citationsById} />
           </CardContent>
         </Card>
 
@@ -120,6 +122,7 @@ export function ReportTab({ logGroupId }: ReportTabProps) {
           </CardHeader>
           <CardContent>
             <p className={"text-sm"}>{report.root_cause_hypothesis}</p>
+            <SectionSources citationIds={report.root_cause_hypothesis_citation_ids} citationsById={citationsById} />
           </CardContent>
         </Card>
 
@@ -137,6 +140,7 @@ export function ReportTab({ logGroupId }: ReportTabProps) {
                 ))}
               </ul>
             )}
+            <SectionSources citationIds={report.top_errors_citation_ids} citationsById={citationsById} />
           </CardContent>
         </Card>
       </section>
@@ -150,6 +154,7 @@ export function ReportTab({ logGroupId }: ReportTabProps) {
         </CardHeader>
         <CardContent>
           <div className={"rounded-md bg-muted/40 p-4 text-sm leading-relaxed"}>{report.log_sequence_narrative}</div>
+          <SectionSources citationIds={report.log_sequence_narrative_citation_ids} citationsById={citationsById} />
         </CardContent>
       </Card>
 
@@ -171,6 +176,7 @@ export function ReportTab({ logGroupId }: ReportTabProps) {
                 ))}
               </ul>
             )}
+            <SectionSources citationIds={report.recommendations_citation_ids} citationsById={citationsById} />
           </CardContent>
         </Card>
 
@@ -195,6 +201,7 @@ export function ReportTab({ logGroupId }: ReportTabProps) {
                 ))}
               </div>
             )}
+            <SectionSources citationIds={report.anomalies_citation_ids} citationsById={citationsById} />
           </CardContent>
         </Card>
       </section>
@@ -206,6 +213,36 @@ export function ReportTab({ logGroupId }: ReportTabProps) {
         </Button>
       </div>
     </div>
+  );
+}
+
+function SectionSources({
+  citationIds,
+  citationsById,
+}: {
+  citationIds: string[];
+  citationsById: Map<string, LogInsightReport["citations"][number]>;
+}) {
+  const sectionCitations = citationIds.map((id) => citationsById.get(id)).filter((citation) => citation !== undefined);
+  if (sectionCitations.length === 0) {
+    return null;
+  }
+
+  return (
+    <details className={"mt-3 rounded-md border p-2 text-xs"}>
+      <summary className={"cursor-pointer font-medium"}>Sources ({sectionCitations.length})</summary>
+      <div className={"mt-2 flex flex-col gap-2"}>
+        {sectionCitations.map((citation) => (
+          <div className={"rounded border bg-muted/40 p-2"} key={citation.id}>
+            <div className={"font-medium"}>{citation.id}</div>
+            <div>Table: {citation.source_table}</div>
+            <div>File: {citation.source_file ?? "N/A"}</div>
+            <div>Rows: {citation.row_range}</div>
+            <div>Evidence: {citation.evidence}</div>
+          </div>
+        ))}
+      </div>
+    </details>
   );
 }
 
