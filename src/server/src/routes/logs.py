@@ -29,6 +29,7 @@ from lib.megabase import drop_table as megabase_drop_table
 from lib.megabase import init_megabase
 from lib.megabase import query_records as megabase_query_records
 from lib.ai import get_generative_model
+from lib.ai_prompting import build_hardened_system_prompt, wrap_untrusted_content
 from lib.models import Asset, LogGroup, LogFile, LogMessage, LogProcess, LogReport, LogTable, User
 from lib.storage import delete_file, download_file, upload_file
 from parsers.orchestrator import create_process, enqueue_process, mark_process_failed
@@ -1190,12 +1191,12 @@ def _fetch_group_table_context(group_id: str, database: Session) -> str:
 
 
 def _build_chat_system_prompt(group_name: str) -> str:
-    return (
-        "You are Logdog's AI log analysis assistant. "
-        f'You are helping the user analyze the log group "{group_name}".\n\n'
-        "Refer to this log group by its display name. Do not mention internal IDs or UUIDs.\n"
-        "Answer the user's questions based on the log data context provided in the first message below. "
-        "Be concise, accurate, and actionable. If the data is insufficient, say so."
+    return build_hardened_system_prompt(
+        "You are Logdog's AI log analysis assistant.",
+        f'You are helping the user analyze the log group "{group_name}".',
+        "Refer to this log group by its display name. Do not mention internal IDs or UUIDs.",
+        "Answer the user's questions based on the log data context provided in the first message below.",
+        "Be concise, accurate, and actionable. If the data is insufficient, say so.",
     )
 
 
@@ -1217,7 +1218,7 @@ def stream_chat(
 
     # Inject table context as a clearly delimited user message rather than
     # embedding untrusted log content in the system prompt (prompt-injection mitigation).
-    messages.append(("user", f"[Log data context for this session]\n\n{table_context}\n\n---\n"))
+    messages.append(("user", wrap_untrusted_content(table_context, label="Log data context for this session")))
 
     for turn in payload.history:
         role = str(turn.get("role", "user"))
@@ -1322,13 +1323,13 @@ def generate_insights(
     group = _require_owned_group(database=database, group_id=group_id, user_id=current_user.id)
     context = _fetch_group_rows_for_report(str(group.id), database)
 
-    system_prompt = (
-        "You are an expert log analyst. Analyze the provided log data and generate a structured insight report. "
-        "Return valid JSON matching the required schema. Be concise and factual."
+    system_prompt = build_hardened_system_prompt(
+        "You are an expert log analyst. Analyze the provided log data and generate a structured insight report.",
+        "Return valid JSON matching the required schema. Be concise and factual.",
     )
 
     prompt = (
-        f"{context}\n\n"
+        f"{wrap_untrusted_content(context, label='Insight log data context')}\n\n"
         "Generate a JSON report with these fields:\n"
         '- "summary": a 1-2 sentence overview\n'
         '- "summary_citation_ids": list of citation IDs used by summary\n'
