@@ -88,6 +88,7 @@ class LogProcessResponse(BaseModel):
     overall_confidence: float | None = None
     per_file_confidence: dict[str, float | None] | None = None
     per_table_confidence: dict[str, float | None] | None = None
+    adaptation_diagnostics: dict[str, Any] | None = None
     error: str | None
     created_at: datetime
     updated_at: datetime
@@ -474,6 +475,8 @@ def _log_process_response(process: LogProcess):
             warnings.append("Per-table parse confidence unavailable; returning null.")
             result["per_table_confidence"] = None
         result["warnings"] = warnings
+        diagnostics = result.get("diagnostics") if isinstance(result.get("diagnostics"), dict) else {}
+        result["adaptation_diagnostics"] = diagnostics.get("adaptation", {})
 
     return LogProcessResponse(
         id=str(process.id),
@@ -485,6 +488,7 @@ def _log_process_response(process: LogProcess):
         overall_confidence=result.get("overall_confidence") if isinstance(result, dict) else None,
         per_file_confidence=result.get("per_file_confidence") if isinstance(result, dict) else None,
         per_table_confidence=result.get("per_table_confidence") if isinstance(result, dict) else None,
+        adaptation_diagnostics=result.get("adaptation_diagnostics") if isinstance(result, dict) else None,
         error=process.error,
         created_at=process.created_at,
         updated_at=process.updated_at,

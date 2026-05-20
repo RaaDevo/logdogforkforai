@@ -37,6 +37,7 @@ class CachedSchema:
     success_count: int = 0
     failure_count: int = 0
     null_rates: dict[str, float] = field(default_factory=dict)
+    route_stats: dict[str, dict[str, int]] = field(default_factory=dict)
 
     @property
     def is_expired(self) -> bool:
@@ -198,6 +199,24 @@ class SchemaCache:
         if self._use_persistence:
             self._record_db_result(schema_key, success=False)
 
+    def record_route_outcome(
+        self,
+        schema_key: str,
+        *,
+        detected_format: str,
+        parser_key: str,
+        profile_name: str | None,
+        success: bool,
+    ) -> None:
+        route_key = f"{detected_format}|{parser_key}|{profile_name or 'default'}"
+        cached = self._cache.get(schema_key)
+        if cached is not None:
+            bucket = cached.route_stats.get(route_key, {"success": 0, "failure": 0})
+            bucket["success" if success else "failure"] = int(bucket.get("success" if success else "failure", 0)) + 1
+            cached.route_stats[route_key] = bucket
+        if self._use_persistence:
+            self._record_db_route_outcome(schema_key=schema_key, route_key=route_key, success=success)
+
     def get_by_format(
         self,
         format_name: str,
@@ -336,6 +355,32 @@ class SchemaCache:
         finally:
             db.close()
 
+    def _record_db_route_outcome(self, schema_key: str, route_key: str, success: bool) -> None:
+        db = SessionLocal()
+        try:
+            entry = db.query(SchemaCacheEntry).filter(SchemaCacheEntry.cache_key == schema_key).first()
+            if entry is None:
+                return
+            try:
+                columns = json.loads(entry.columns)
+            except json.JSONDecodeError:
+                columns = []
+            route_stats = {}
+            if isinstance(columns, list) and columns and isinstance(columns[-1], dict):
+                route_stats = columns[-1].get("_route_stats", {})
+            bucket = route_stats.get(route_key, {"success": 0, "failure": 0})
+            bucket["success" if success else "failure"] = int(bucket.get("success" if success else "failure", 0)) + 1
+            route_stats[route_key] = bucket
+            if isinstance(columns, list):
+                if columns and isinstance(columns[-1], dict) and "_route_stats" in columns[-1]:
+                    columns[-1]["_route_stats"] = route_stats
+                else:
+                    columns.append({"_route_stats": route_stats})
+            entry.columns = json.dumps(columns, ensure_ascii=True)
+            db.commit()
+        finally:
+            db.close()
+
     @staticmethod
     def _to_cached(entry: SchemaCacheEntry) -> CachedSchema:
         now = time.time()
@@ -345,6 +390,11 @@ class SchemaCache:
             columns = json.loads(entry.columns)
         except json.JSONDecodeError:
             columns = []
+
+        route_stats: dict[str, dict[str, int]] = {}
+        if isinstance(columns, list) and columns and isinstance(columns[-1], dict) and "_route_stats" in columns[-1]:
+            route_stats = columns[-1].get("_route_stats", {})
+            columns = columns[:-1]
 
         return CachedSchema(
             schema_key=entry.cache_key,
@@ -364,4 +414,5 @@ class SchemaCache:
             access_count=int(entry.access_count or 0),
             success_count=int(entry.success_count or 0),
             failure_count=int(entry.failure_count or 0),
+            route_stats=route_stats,
         )
