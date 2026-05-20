@@ -1,4 +1,5 @@
 import hashlib
+import logging
 import uuid
 
 import boto3
@@ -18,6 +19,7 @@ from lib.database import get_database
 from lib.models import Asset
 
 _s3_client = None
+logger = logging.getLogger(__name__)
 
 
 def _get_s3_client():
@@ -44,12 +46,19 @@ def upload_file(file_data: bytes, filename: str, content_type: str, db: Session 
     s3_key = _get_s3_key(asset_id)
 
     client = _get_s3_client()
-    client.put_object(
-        Bucket=BUCKET_NAME.get_secret_value(),
-        Key=s3_key,
-        Body=file_data,
-        ContentType=content_type,
-    )
+    try:
+        client.put_object(
+            Bucket=BUCKET_NAME.get_secret_value(),
+            Key=s3_key,
+            Body=file_data,
+            ContentType=content_type,
+        )
+    except ClientError:
+        logger.exception(
+            "Asset upload failed during S3 put_object",
+            extra={"asset_id": str(asset_id), "s3_key": s3_key, "failure_stage": "s3_put_object"},
+        )
+        raise
 
     asset = Asset(
         id=asset_id,
@@ -58,9 +67,27 @@ def upload_file(file_data: bytes, filename: str, content_type: str, db: Session 
         type=content_type,
         hash=file_hash,
     )
-    db.add(asset)
-    db.commit()
-    db.refresh(asset)
+    try:
+        db.add(asset)
+        db.commit()
+        db.refresh(asset)
+    except Exception:
+        db.rollback()
+        logger.exception(
+            "Asset upload failed during DB commit; attempting compensating S3 delete",
+            extra={"asset_id": str(asset_id), "s3_key": s3_key, "failure_stage": "db_commit"},
+        )
+        try:
+            client.delete_object(
+                Bucket=BUCKET_NAME.get_secret_value(),
+                Key=s3_key,
+            )
+        except ClientError:
+            logger.exception(
+                "Compensating S3 delete failed after DB commit failure",
+                extra={"asset_id": str(asset_id), "s3_key": s3_key, "failure_stage": "s3_compensation_delete"},
+            )
+        raise
     return asset
 
 
@@ -91,17 +118,27 @@ def delete_file(asset_id: uuid.UUID, db: Session = Depends(get_database)) -> boo
     if not asset:
         return False
 
+    try:
+        db.delete(asset)
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception(
+            "Asset delete failed during DB commit",
+            extra={"asset_id": str(asset_id), "s3_key": _get_s3_key(asset_id), "failure_stage": "db_commit"},
+        )
+        raise
+
     s3_key = _get_s3_key(asset_id)
     client = _get_s3_client()
-
     try:
         client.delete_object(
             Bucket=BUCKET_NAME.get_secret_value(),
             Key=s3_key,
         )
     except ClientError:
-        pass
-
-    db.delete(asset)
-    db.commit()
+        logger.exception(
+            "Asset deleted from DB but S3 delete failed",
+            extra={"asset_id": str(asset_id), "s3_key": s3_key, "failure_stage": "s3_delete_post_commit"},
+        )
     return True
