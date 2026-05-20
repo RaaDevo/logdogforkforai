@@ -608,12 +608,11 @@ def _record_feedback(
     result: ParserPipelineResult,
     profile_name: str | None = None,
 ) -> None:
-    from parsers.few_shot_store import FewShotStore
-    from parsers.schema_cache import SchemaCache
+    from parsers.parser_profiles import ParserProfileStore
 
-    few_shot_store = FewShotStore()
-    schema_cache = SchemaCache()
+    profile_store = ParserProfileStore()
     profile = get_profile(profile_name)
+    success = bool(result.table_definitions and not result.errors)
 
     for file_input in file_inputs:
         file_classification = next(
@@ -634,57 +633,36 @@ def _record_feedback(
 
         fingerprint = _fingerprint(sample_lines)
 
-        few_shot_store.record_successful_parse(
-            format_name=file_classification.detected_format,
-            domain=profile.domain,
-            sample_lines=sample_lines,
-            schema={
-                "tables": [
-                    {
-                        "name": td.table_name,
-                        "columns": [col.name for col in td.columns],
-                    }
-                    for td in result.table_definitions
-                ],
-            },
-            confidence=file_classification.format_confidence,
-            profile_name=profile_name,
+        profile_store.update_feedback(
             fingerprint=fingerprint,
-        )
-
-    for table_definition in result.table_definitions:
-        sample_lines = (
-            [line for line in file_inputs[0].content.splitlines()[:10] if line.strip()] if file_inputs else []
-        )
-        fingerprint = _fingerprint(sample_lines)
-        schema_cache.put(
-            sample_lines=sample_lines,
-            format_name=classification.dominant_format,
             domain=profile.domain,
-            columns=[
-                {"name": col.name, "sql_type": col.sql_type, "description": col.description, "nullable": col.nullable}
-                for col in table_definition.columns
-            ],
-            extraction_strategy="per_line",
             profile_name=profile_name,
-            detected_format=classification.dominant_format,
-            structural_class=classification.structural_class.value,
-            parser_key=classification.selected_parser_key,
-            format_confidence=classification.confidence,
-            fingerprint=fingerprint,
+            detected_format=file_classification.detected_format,
+            success=success,
         )
 
 
 def get_pipeline_stats() -> dict[str, Any]:
     from parsers.few_shot_store import FewShotStore
+    from parsers.parser_profiles import ParserProfileStore
     from parsers.schema_cache import SchemaCache
 
     few_shot_store = FewShotStore()
     schema_cache = SchemaCache()
+    profile_store = ParserProfileStore()
+    profile_stats = profile_store.stats()
+    lookups = profile_stats.get("profile_lookups", 0)
+    hits = profile_stats.get("profile_hits", 0)
+    bypasses = profile_stats.get("llm_bypasses", 0)
 
     return {
         "few_shot_store": few_shot_store.stats(),
         "schema_cache": schema_cache.stats(),
+        "parser_profiles": profile_stats,
+        "profile_hit_rate": (hits / lookups) if lookups else 0.0,
+        "llm_bypass_rate": (bypasses / lookups) if lookups else 0.0,
+        "profile_promotions": profile_stats.get("profile_promotions", 0),
+        "profile_demotions": profile_stats.get("profile_demotions", 0),
         "registered_parsers": sorted(ParserRegistry.registered_keys()),
     }
 
