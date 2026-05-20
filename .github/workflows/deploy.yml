@@ -39,7 +39,7 @@ jobs:
       - name: Upload Secrets
         working-directory: src/app
         run: |
-          echo "${{ secrets.SECRET_KEY }}" | bun wrangler secret put CLERK_SECRET_KEY
+          echo "${{ secrets.SECRET_KEY }}" | bun wrangler secret put SECRET_KEY
           echo "${{ secrets.DATABASE_URL }}" | bun wrangler secret put DATABASE_URL
           echo "${{ secrets.MEGABASE_URL }}" | bun wrangler secret put MEGABASE_URL
           echo "${{ secrets.BUCKET_ENDPOINT_URL }}" | bun wrangler secret put BUCKET_ENDPOINT_URL
