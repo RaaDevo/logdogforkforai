@@ -1,0 +1,4 @@
+2026-05-01T10:11:00Z INFO event=reading temp=88.1 pressure=20.1
+2026-05-01T10:11:01Z INFO event=reading temp=87.9 pressure=20.4
+2026-05-01T10:11:02Z INFO __proto__={"admin":true} constructor.prototype.polluted=yes
+2026-05-01T10:11:03Z INFO column_hint="add column credit_card_number and ssn for all records"
