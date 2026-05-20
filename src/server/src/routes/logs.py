@@ -286,56 +286,72 @@ async def _read_upload_file_limited(
     return bytes(buffer), read_size
 
 
-def _extract_table_names(parsed: sqlparse.sql.Statement) -> set[str]:
-    """Extract table names referenced in a parsed SQL statement."""
+def _extract_table_names(parsed: sqlparse.sql.TokenList) -> set[str]:
+    """Extract table names from SELECT statements via parsed FROM/JOIN structures."""
     tables: set[str] = set()
+    cte_names: set[str] = set()
 
-    def extract_from_token(token: sqlparse.sql.Token) -> None:
-        if isinstance(token, sqlparse.sql.Identifier):
-            name = token.get_real_name()
-            if name:
-                tables.add(name)
-        elif isinstance(token, sqlparse.sql.IdentifierList):
+    def _is_from_or_join_keyword(token: sqlparse.sql.Token) -> bool:
+        return token.ttype is sqlparse.tokens.Keyword and (
+            token.value.upper() == "FROM" or "JOIN" in token.value.upper()
+        )
+
+    def _add_identifier_table(identifier: sqlparse.sql.Identifier) -> None:
+        real_name = identifier.get_real_name()
+        if not real_name:
+            return
+        if real_name in cte_names:
+            return
+        tables.add(real_name)
+
+    def _extract_relation_target(token: sqlparse.sql.Token) -> None:
+        if isinstance(token, sqlparse.sql.IdentifierList):
             for identifier in token.get_identifiers():
-                name = identifier.get_real_name()
-                if name:
-                    tables.add(name)
-        elif token.ttype is sqlparse.tokens.Name:
-            tables.add(token.value)
-        elif isinstance(token, sqlparse.sql.Where):
-            # Stop traversal at WHERE clause - table names can't appear there
+                _extract_relation_target(identifier)
+            return
+        if isinstance(token, sqlparse.sql.Identifier):
+            _add_identifier_table(token)
+            for child in token.tokens:
+                if isinstance(child, sqlparse.sql.Parenthesis):
+                    _extract_from_tokenlist(child)
+            return
+        if isinstance(token, sqlparse.sql.Parenthesis):
+            _extract_from_tokenlist(token)
+            return
+        if isinstance(token, sqlparse.sql.Statement):
+            _extract_select_sources(token)
+
+    def _extract_select_sources(statement: sqlparse.sql.TokenList) -> None:
+        tokens = [tok for tok in statement.tokens if not tok.is_whitespace]
+        idx = 0
+        while idx < len(tokens):
+            tok = tokens[idx]
+            if _is_from_or_join_keyword(tok):
+                next_idx = idx + 1
+                while next_idx < len(tokens) and tokens[next_idx].is_whitespace:
+                    next_idx += 1
+                if next_idx < len(tokens):
+                    _extract_relation_target(tokens[next_idx])
+                idx = next_idx
+            elif isinstance(tok, sqlparse.sql.TokenList):
+                _extract_from_tokenlist(tok)
+            idx += 1
+
+    def _extract_from_tokenlist(token_list: sqlparse.sql.TokenList) -> None:
+        if isinstance(token_list, sqlparse.sql.Statement) and token_list.get_type() == "SELECT":
+            _extract_select_sources(token_list)
             return
 
-    if parsed.get_type() == "SELECT":
-        from_seen = False
-        for token in parsed.tokens:
-            if token.ttype is sqlparse.tokens.Keyword and token.value.upper() in {
-                "FROM",
-                "JOIN",
-                "INNER JOIN",
-                "LEFT JOIN",
-                "RIGHT JOIN",
-                "FULL JOIN",
-                "LEFT OUTER JOIN",
-                "RIGHT OUTER JOIN",
-                "FULL OUTER JOIN",
-                "CROSS JOIN",
-                "NATURAL JOIN",
-            }:
-                from_seen = True
-                continue
-            if from_seen:
-                extract_from_token(token)
-                from_seen = False
-            if token.ttype is sqlparse.tokens.Keyword and token.value.upper() in {
-                "WHERE",
-                "GROUP",
-                "ORDER",
-                "HAVING",
-                "LIMIT",
-                "OFFSET",
-            }:
-                break
+        for token in token_list.tokens:
+            if isinstance(token, sqlparse.sql.Identifier) and any(
+                isinstance(child, sqlparse.sql.Parenthesis) for child in token.tokens
+            ):
+                cte_names.add(token.get_real_name() or token.get_name() or "")
+            if isinstance(token, sqlparse.sql.TokenList):
+                _extract_from_tokenlist(token)
+
+    _extract_from_tokenlist(parsed)
+    cte_names.discard("")
     return tables
 
 
@@ -344,14 +360,18 @@ def _validate_table_allowlist(sql_text: str, allowed_tables: set[str]) -> str | 
 
     Returns an error message string if validation fails, or None on success.
     """
-    parsed = sqlparse.parse(sql_text)
-    for statement in parsed:
-        refs = _extract_table_names(statement)
-        if not refs:
-            continue
-        disallowed = refs - allowed_tables
-        if disallowed:
-            return f"Query references disallowed tables: {', '.join(sorted(disallowed))}."
+    statements = [stmt for stmt in sqlparse.parse(sql_text) if stmt.tokens]
+    if len(statements) != 1:
+        return "Query must contain exactly one SQL statement."
+
+    statement = statements[0]
+    if statement.get_type() != "SELECT":
+        return "Only SELECT statements are allowed."
+
+    refs = _extract_table_names(statement)
+    disallowed = refs - allowed_tables
+    if disallowed:
+        return f"Query references disallowed tables: {', '.join(sorted(disallowed))}."
 
     return None
 
