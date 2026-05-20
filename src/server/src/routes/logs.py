@@ -4,6 +4,7 @@ import csv
 import io
 import json
 import logging
+import os
 import re
 import time
 import uuid
@@ -208,6 +209,81 @@ _HARD_SQL_LIMIT = 10000
 # Chat message limits.
 _MAX_PERSISTED_MESSAGES = 500
 _MAX_MESSAGE_CONTENT_LENGTH = 100000
+
+_MAX_UPLOAD_FILE_SIZE_BYTES = int(os.getenv("MAX_UPLOAD_FILE_SIZE_BYTES", str(25 * 1024 * 1024)))
+_MAX_UPLOAD_REQUEST_SIZE_BYTES = int(os.getenv("MAX_UPLOAD_REQUEST_SIZE_BYTES", str(100 * 1024 * 1024)))
+_UPLOAD_READ_CHUNK_SIZE = 1024 * 1024
+
+
+def _read_upload_content_length(upload_file: UploadFile) -> int | None:
+    content_length = upload_file.headers.get("content-length") if upload_file.headers else None
+    if not content_length:
+        return None
+    try:
+        parsed = int(content_length)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed >= 0 else None
+
+
+def _raise_payload_too_large(*, detail: dict[str, Any]) -> None:
+    raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail=detail)
+
+
+async def _read_upload_file_limited(
+    *,
+    upload_file: UploadFile,
+    max_file_size: int,
+    remaining_request_budget: int,
+) -> tuple[bytes, int]:
+    announced_size = _read_upload_content_length(upload_file)
+    if announced_size is not None and announced_size > max_file_size:
+        _raise_payload_too_large(
+            detail={
+                "error": "file_too_large",
+                "filename": upload_file.filename or "uploaded.log",
+                "max_file_size_bytes": max_file_size,
+                "actual_file_size_bytes": announced_size,
+            }
+        )
+
+    if remaining_request_budget <= 0:
+        _raise_payload_too_large(
+            detail={
+                "error": "request_too_large",
+                "max_request_size_bytes": _MAX_UPLOAD_REQUEST_SIZE_BYTES,
+                "actual_request_size_bytes": _MAX_UPLOAD_REQUEST_SIZE_BYTES,
+            }
+        )
+
+    buffer = bytearray()
+    read_size = 0
+    while True:
+        chunk = await upload_file.read(_UPLOAD_READ_CHUNK_SIZE)
+        if not chunk:
+            break
+        chunk_len = len(chunk)
+        read_size += chunk_len
+        if read_size > max_file_size:
+            _raise_payload_too_large(
+                detail={
+                    "error": "file_too_large",
+                    "filename": upload_file.filename or "uploaded.log",
+                    "max_file_size_bytes": max_file_size,
+                    "actual_file_size_bytes": read_size,
+                }
+            )
+        if read_size > remaining_request_budget:
+            _raise_payload_too_large(
+                detail={
+                    "error": "request_too_large",
+                    "max_request_size_bytes": _MAX_UPLOAD_REQUEST_SIZE_BYTES,
+                    "actual_request_size_bytes": _MAX_UPLOAD_REQUEST_SIZE_BYTES + (read_size - remaining_request_budget),
+                }
+            )
+        buffer.extend(chunk)
+
+    return bytes(buffer), read_size
 
 
 def _extract_table_names(parsed: sqlparse.sql.Statement) -> set[str]:
@@ -938,11 +1014,17 @@ async def upload_log_files(
     uploaded_files: list[LogFileResponse] = []
     process_ids: list[str] = []
     outcomes: list[FileProcessOutcomeResponse] = []
+    total_read_size = 0
 
     for file in files:
         filename = (file.filename or "uploaded.log").strip() or "uploaded.log"
         content_type = file.content_type or "application/octet-stream"
-        file_data = await file.read()
+        file_data, file_size = await _read_upload_file_limited(
+            upload_file=file,
+            max_file_size=_MAX_UPLOAD_FILE_SIZE_BYTES,
+            remaining_request_budget=_MAX_UPLOAD_REQUEST_SIZE_BYTES - total_read_size,
+        )
+        total_read_size += file_size
 
         asset = upload_file(file_data=file_data, filename=filename, content_type=content_type, db=database)
 
