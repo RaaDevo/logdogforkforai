@@ -221,3 +221,31 @@ class FewShotEntry(Base):
     last_used = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+
+class ParserProfile(Base):
+    __tablename__ = "parser_profiles"
+
+    id = Column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        index=True,
+        nullable=False,
+        default=uuid.uuid4,
+    )
+    fingerprint = Column(String(64), nullable=False, index=True)
+    domain = Column(String, nullable=False, default="unknown", index=True)
+    profile_name = Column(String, nullable=True, index=True)
+    detected_format = Column(String, nullable=False, index=True)
+    structural_class = Column(String, nullable=False, default="unstructured")
+    parser_key = Column(String, nullable=False, default="unified")
+    extraction_strategy = Column(String, nullable=False, default="per_line")
+    schema = Column(JSONB, nullable=False, default=dict)
+    confidence = Column(Float, nullable=False, default=0.0)
+    health_score = Column(Float, nullable=False, default=0.5)
+    usage_count = Column(Integer, nullable=False, default=0)
+    success_count = Column(Integer, nullable=False, default=0)
+    failure_count = Column(Integer, nullable=False, default=0)
+    last_used = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
