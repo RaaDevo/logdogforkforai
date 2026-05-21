@@ -41,10 +41,23 @@ class _ParsedFileResult:
     rows: list[dict[str, Any]]
     warnings: list[str]
     confidence: float
+    diagnostics: dict[str, Any]
 
 
 class UnifiedPipeline(ParserPipeline):
     parser_key = "unified"
+    sparse_column_threshold = 0.15
+    sparse_column_whitelist = {"error_code", "event_type"}
+    mandatory_compacted_columns = {
+        "id",
+        "timestamp",
+        "raw",
+        "extra",
+        "source",
+        "message",
+        "log_level",
+        "parse_confidence",
+    }
 
     def __init__(self) -> None:
         self.binary_handler = BinaryHandler()
@@ -82,6 +95,7 @@ class UnifiedPipeline(ParserPipeline):
         table_definitions: list[TableDefinition] = []
         records: dict[str, list[dict[str, Any]]] = {}
         warnings: list[str] = []
+        diagnostics: dict[str, Any] = {"files": {}}
         confidence_total = 0.0
         confidence_count = 0
 
@@ -99,6 +113,7 @@ class UnifiedPipeline(ParserPipeline):
 
             table_definitions.append(parsed.table_definition)
             records[parsed.table_definition.table_name] = parsed.rows
+            diagnostics["files"][file_input.filename] = parsed.diagnostics
             warnings.extend(parsed.warnings)
             confidence_total += parsed.confidence
             confidence_count += 1
@@ -109,6 +124,7 @@ class UnifiedPipeline(ParserPipeline):
             parser_key=self.parser_key,
             warnings=warnings,
             confidence=round(confidence_total / max(confidence_count, 1), 2),
+            diagnostics=diagnostics,
         )
 
     def _parse_single_file(
@@ -200,7 +216,9 @@ class UnifiedPipeline(ParserPipeline):
         )
         file_warnings.extend(schema_result.warnings)
 
-        rows = self._build_rows(file_input.filename, all_units, schema_result.columns)
+        coverage = self._compute_column_coverage(all_units)
+        stable_columns, sparse_columns = self._compact_columns(schema_result.columns, coverage)
+        rows = self._build_rows(file_input.filename, all_units, stable_columns, sparse_columns)
         if not rows:
             return None
 
@@ -212,7 +230,7 @@ class UnifiedPipeline(ParserPipeline):
                 f"Anomalies detected: critical={critical_count}, high={high_count}, total={len(anomaly_report.anomalies)}."
             )
 
-        columns = self._merge_columns(schema_result.columns)
+        columns = self._merge_columns(stable_columns)
         table_name = make_megabase_table_name()
         display_name = make_display_name(self.parser_key, file_input.file_id, file_input.filename)
         ddl = build_ddl(table_name, columns)
@@ -226,7 +244,51 @@ class UnifiedPipeline(ParserPipeline):
             rows=rows,
             warnings=file_warnings,
             confidence=round(confidence, 2),
+            diagnostics={
+                "sparse_column_threshold": self.sparse_column_threshold,
+                "column_coverage": coverage,
+                "dropped_sparse_columns": sorted(sparse_columns),
+            },
         )
+
+    def _compute_column_coverage(self, units: list[ParseUnit]) -> dict[str, float]:
+        total_rows = max(len(units), 1)
+        non_empty_counts: dict[str, int] = {}
+        for unit in units:
+            for key, value in unit.fields.items():
+                safe_key = self._sanitize(key)
+                if self._has_non_empty_value(value):
+                    non_empty_counts[safe_key] = non_empty_counts.get(safe_key, 0) + 1
+        return {key: round(count / total_rows, 4) for key, count in non_empty_counts.items()}
+
+    def _compact_columns(
+        self,
+        inferred_columns: list[ColumnDefinition],
+        coverage: dict[str, float],
+    ) -> tuple[list[ColumnDefinition], set[str]]:
+        kept: list[ColumnDefinition] = []
+        sparse: set[str] = set()
+        for column in inferred_columns:
+            name = column.name
+            if name in self.mandatory_compacted_columns or name in self.sparse_column_whitelist:
+                kept.append(column)
+                continue
+            column_coverage = coverage.get(name, 0.0)
+            if column_coverage >= self.sparse_column_threshold:
+                kept.append(column)
+            else:
+                sparse.add(name)
+        return kept, sparse
+
+    @staticmethod
+    def _has_non_empty_value(value: Any) -> bool:
+        if value is None:
+            return False
+        if isinstance(value, str):
+            return bool(value.strip())
+        if isinstance(value, (list, dict, tuple, set)):
+            return len(value) > 0
+        return True
 
     def _normalize_format(self, filename: str, lines: list[str], detected_format: str) -> str:
         lower_name = filename.lower()
@@ -443,8 +505,10 @@ class UnifiedPipeline(ParserPipeline):
         filename: str,
         units: list[ParseUnit],
         columns: list[ColumnDefinition],
+        sparse_columns: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
+        sparse_columns = sparse_columns or set()
         allowed = (
             BASELINE_COLUMN_NAMES
             | {column.name for column in columns}
@@ -466,7 +530,7 @@ class UnifiedPipeline(ParserPipeline):
 
             for key, value in unit.fields.items():
                 safe_key = self._sanitize(key)
-                if safe_key in allowed:
+                if safe_key in allowed and safe_key not in sparse_columns:
                     row[safe_key] = value
                 else:
                     overflow[safe_key] = value
