@@ -639,7 +639,7 @@ def _record_feedback(
     profile_store = ParserProfileStore()
     schema_cache = SchemaCache()
     profile = get_profile(profile_name)
-    success = bool(result.table_definitions and not result.errors)
+    success = bool(result.table_definitions)
 
     for file_input in file_inputs:
         file_classification = next(
