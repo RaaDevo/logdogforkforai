@@ -124,7 +124,8 @@ function DataTable<TData>({
   return (
     <div className={cn("flex flex-col gap-4", className)}>
       <div className="rounded-md border">
-        <Table>
+        <div className="overflow-x-auto">
+          <Table className="min-w-max">
           <TableHeader>
             {table.getHeaderGroups().map((headerGroup) => (
               <TableRow key={headerGroup.id}>
@@ -153,7 +154,8 @@ function DataTable<TData>({
               </TableRow>
             )}
           </TableBody>
-        </Table>
+          </Table>
+        </div>
       </div>
       <DataTablePagination table={table}>{toolbar?.(table)}</DataTablePagination>
     </div>
